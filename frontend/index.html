@@ -1,0 +1,2639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Face Mask Monitoring & Analytics Control Console.">
+  <title>MaskDetect</title>
+
+  <!-- Google Fonts: Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- TF.js (fallback offline inference) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+  <!-- BlazeFace (offline face detection fallback) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7/dist/blazeface.min.js"></script>
+
+  <style>
+    /* ── RESET & BASE ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --green:      #10B981;
+      --green-bg:   #ECFDF5;
+      --green-bd:   #A7F3D0;
+      --red:        #EF4444;
+      --red-bg:     #FEF2F2;
+      --red-bd:     #FCA5A5;
+      --blue:       #3B82F6;
+      --blue-bg:    #EFF6FF;
+      --blue-bd:    #BFDBFE;
+      --gray50:     #F8FAFC;
+      --gray100:    #F1F5F9;
+      --gray200:    #E2E8F0;
+      --gray300:    #CBD5E1;
+      --gray400:    #94A3B8;
+      --gray500:    #64748B;
+      --gray600:    #475569;
+      --gray800:    #1E293B;
+      --gray900:    #0F172A;
+      
+      --glass-bg:   rgba(255, 255, 255, 0.7);
+      --glass-border: rgba(255, 255, 255, 0.6);
+      --glass-blur: blur(20px);
+      
+      --radius:     14px;
+      --radius-sm:  8px;
+      --shadow:     0 8px 32px rgba(15, 23, 42, 0.04);
+      --shadow-lg:  0 12px 40px rgba(15, 23, 42, 0.06);
+    }
+
+    html, body {
+      height: 100%;
+      background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+      background-attachment: fixed;
+      font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+      color: var(--gray800);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: var(--gray100); }
+    ::-webkit-scrollbar-thumb { background: var(--gray300); border-radius: 4px; }
+
+    /* ── HEADER ──────────────────────────────────────────────── */
+    header {
+      background: rgba(255, 255, 255, 0.75);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border-bottom: 1px solid var(--glass-border);
+      padding: 0 28px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 1px 8px rgba(15, 23, 42, 0.03);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-icon {
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(135deg, var(--blue), var(--green));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 17px;
+    }
+    .brand-name {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--gray900);
+      letter-spacing: -0.3px;
+    }
+    .brand-name span { font-weight: 300; color: var(--gray400); }
+
+    .pill-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .conn-pill, .model-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid;
+      transition: all 0.3s;
+    }
+    .conn-pill .dot, .model-pill .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+    .conn-pill.checking, .model-pill.checking { color: var(--gray500); border-color: var(--gray300); background: var(--gray100); }
+    .conn-pill.online, .model-pill.online  { color: var(--green);   border-color: var(--green-bd); background: var(--green-bg); }
+    .conn-pill.offline, .model-pill.offline { color: var(--red);     border-color: var(--red-bd); background: var(--red-bg); }
+    .conn-pill.active, .model-pill.active  { color: var(--blue); border-color: var(--blue-bd); background: var(--blue-bg); }
+
+    /* ── TABS NAVIGATION ────────────────────────────────────────── */
+    .tabs-wrap {
+      background: rgba(255, 255, 255, 0.5);
+      border-bottom: 1px solid var(--glass-border);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+    }
+    .tabs {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 28px;
+      display: flex;
+      gap: 4px;
+    }
+    .tab-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 20px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--gray500);
+      border: none;
+      background: none;
+      cursor: pointer;
+      border-bottom: 2.5px solid transparent;
+      margin-bottom: -1px;
+      transition: all 0.2s;
+    }
+    .tab-btn:hover { color: var(--gray900); }
+    .tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); font-weight: 600; }
+
+    /* ── MAIN LAYOUT ─────────────────────────────────────────── */
+    main {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px 24px 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .upper-row {
+      display: grid;
+      grid-template-columns: 1fr 360px;
+      gap: 20px;
+    }
+    .lower-row {
+      display: grid;
+      grid-template-columns: 1.1fr 1.4fr 1.1fr;
+      gap: 20px;
+    }
+    @media (max-width: 1024px) {
+      .upper-row, .lower-row { grid-template-columns: 1fr; }
+    }
+
+    /* ── GLASS CARD ──────────────────────────────────────────── */
+    .glass-card {
+      background: var(--glass-bg);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .card-hdr {
+      padding: 12px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card-ttl {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--gray500);
+    }
+    .card-body { padding: 18px 20px; flex: 1; }
+
+    /* ── BUTTONS ─────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+    .btn-primary:hover:not(:disabled) { background: #2563EB; border-color: #2563EB; }
+    .btn-danger { background: var(--red); color: #fff; border-color: var(--red); }
+    .btn-danger:hover { background: #DC2626; }
+    .btn-outline { background: rgba(255,255,255,0.6); color: var(--gray600); border-color: var(--gray300); }
+    .btn-outline:hover:not(:disabled) { background: #fff; }
+
+    /* ── MODE BANNER ─────────────────────────────────────────── */
+    #mode-banner {
+      display: none;
+      background: var(--red-bg);
+      border: 1px solid var(--red-bd);
+      border-radius: 8px;
+      padding: 9px 14px;
+      font-size: 12px;
+      color: var(--red);
+      font-weight: 500;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    #mode-banner.visible { display: flex; }
+
+    /* ── VIEWPORT CARD & HUD ─────────────────────────── */
+    .viewport-card {
+      position: relative;
+      background: #090d16;
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      aspect-ratio: 16/9;
+      box-shadow: var(--shadow-lg);
+    }
+    #overlay, #img-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      position: absolute;
+      inset: 0;
+    }
+
+    /* HUD overlays */
+    .hud-overlay {
+      position: absolute;
+      z-index: 10;
+      pointer-events: auto;
+    }
+    
+    /* Telemetry HUD (Top Left) */
+    .hud-telemetry {
+      top: 14px;
+      left: 14px;
+      background: rgba(9, 13, 22, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: 8px;
+      padding: 6px 12px;
+      display: flex;
+      gap: 16px;
+      color: #fff;
+      font-size: 11px;
+    }
+    .hud-telemetry span { font-weight: 600; display: flex; align-items: center; gap: 4px; }
+    .hud-telemetry span strong { color: var(--blue); }
+
+    /* Status HUD (Top Right) */
+    .hud-status {
+      top: 14px;
+      right: 14px;
+      display: flex;
+      gap: 8px;
+    }
+    .hud-pill {
+      background: rgba(9, 13, 22, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 10px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.7);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .hud-pill.green { color: var(--green); border-color: rgba(16, 185, 129, 0.25); }
+    .hud-pill.red   { color: var(--red); border-color: rgba(239, 68, 68, 0.25); }
+    .hud-pill.blue  { color: var(--blue); border-color: rgba(59, 130, 246, 0.25); }
+    .hud-pill .dot { width: 5px; height: 5px; background: currentColor; }
+
+    /* Controls HUD (Bottom Center) */
+    .hud-controls {
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(9, 13, 22, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-radius: 10px;
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .hud-sel {
+      font-family: inherit;
+      font-size: 11px;
+      color: #fff;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 5px;
+      padding: 5px 8px;
+      outline: none;
+      cursor: pointer;
+      max-width: 140px;
+    }
+    .hud-sel option { background: #090d16; color: #fff; }
+
+    /* Meta HUD (Bottom Right) */
+    .hud-meta {
+      bottom: 14px;
+      right: 14px;
+      background: rgba(9, 13, 22, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 8px;
+      padding: 5px 10px;
+      font-size: 10px;
+      color: rgba(255,255,255,0.55);
+      text-align: right;
+    }
+    .hud-meta span { display: block; font-weight: 600; color: #fff; font-size: 11px; }
+
+    /* Placeholder and screens */
+    .cam-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: #090d16;
+      z-index: 5;
+      color: var(--gray500);
+    }
+    .cam-placeholder.hidden { display: none; }
+    .cam-icon { font-size: 44px; }
+    .cam-placeholder p { font-size: 13px; text-align: center; max-width: 220px; }
+
+    #cam-error-msg {
+      position: absolute;
+      inset: 0;
+      background: rgba(9, 13, 22, 0.95);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      z-index: 30;
+      padding: 24px;
+      text-align: center;
+    }
+    #cam-error-msg.visible { display: flex; }
+    .err-icon { font-size: 32px; }
+    #cam-error-msg p { color: #fff; font-size: 13px; max-width: 260px; line-height: 1.4; }
+
+    /* ── IMAGE UPLOAD CONTAINER ──────────────────────────────── */
+    .upload-area { height: 100%; display: flex; align-items: center; justify-content: center; padding: 28px; }
+    .drop-zone {
+      border: 2px dashed rgba(255,255,255,0.15);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,0.03);
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      cursor: pointer;
+      transition: all 0.25s;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.drag-over { border-color: var(--blue); background: rgba(59, 130, 246, 0.08); }
+    .drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .dz-icon { font-size: 44px; }
+    .dz-title { font-size: 14px; font-weight: 600; color: #fff; }
+    .dz-sub { font-size: 11px; color: var(--gray500); }
+    
+    .img-canvas-wrap { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+    .img-loader {
+      position: absolute;
+      inset: 0;
+      background: rgba(9, 13, 22, 0.75);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      gap: 10px;
+      font-size: 12px;
+      z-index: 15;
+    }
+
+    /* ── DETECTED INDIVIDUALS ──────────── */
+    .faces-table-wrap { height: 100%; }
+    .faces-table-hdr {
+      padding: 12px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.4);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--gray500);
+    }
+    .faces-table-body { flex: 1; overflow-y: auto; max-height: 440px; }
+    
+    .face-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+      transition: background 0.15s;
+    }
+    .face-row:last-child { border-bottom: none; }
+    .face-row:hover { background: rgba(255, 255, 255, 0.25); }
+    
+    .f-thumb {
+      width: 42px;
+      height: 42px;
+      border-radius: 7px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.4);
+      border: 1px solid rgba(255,255,255,0.5);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .f-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .f-info { flex: 1; min-width: 0; }
+    .f-name { font-size: 13px; font-weight: 600; color: var(--gray800); }
+    .f-bar-wrap { margin-top: 4px; height: 3px; background: rgba(0, 0, 0, 0.05); border-radius: 999px; overflow: hidden; }
+    .f-bar { height: 100%; border-radius: 999px; }
+    .f-bar.green { background: var(--green); }
+    .f-bar.red { background: var(--red); }
+    
+    .f-meta { margin-top: 3px; display: flex; justify-content: space-between; font-size: 10px; color: var(--gray500); }
+    .f-badge {
+      flex-shrink: 0;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      border: 1px solid;
+    }
+    .f-badge.green { color: var(--green); border-color: var(--green-bd); background: var(--green-bg); }
+    .f-badge.red   { color: var(--red); border-color: var(--red-bd); background: var(--red-bg); }
+
+    .empty-row, .empty-state {
+      padding: 24px;
+      text-align: center;
+      color: var(--gray400);
+      font-size: 12px;
+    }
+
+    /* ── SETTINGS PANEL ──────────────────────────────────────── */
+    .setting-item { margin-bottom: 12px; }
+    .setting-item:last-child { margin-bottom: 0; }
+    .setting-item.flex-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .setting-text { display: flex; flex-direction: column; gap: 1px; }
+    .setting-title { font-size: 12px; font-weight: 600; color: var(--gray800); }
+    .setting-desc { font-size: 10px; color: var(--gray500); line-height: 1.25; }
+    
+    .switch { position: relative; display: inline-block; width: 34px; height: 18px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider-toggle { position: absolute; cursor: pointer; inset: 0; background-color: var(--gray300); transition: 0.3s; border-radius: 34px; }
+    .slider-toggle:before { position: absolute; content: ""; height: 12px; width: 12px; left: 3px; bottom: 3px; background-color: #fff; transition: 0.3s; border-radius: 50%; }
+    input:checked + .slider-toggle { background-color: var(--blue); }
+    input:checked + .slider-toggle:before { transform: translateX(16px); }
+
+    /* ── COMPLIANCE TIMELINE CHART ───────────────────────────── */
+    .chart-body { padding: 14px 18px; background: #fff; border-bottom-left-radius: var(--radius); border-bottom-right-radius: var(--radius); display: flex; align-items: center; justify-content: center; }
+
+    /* ── VIOLATION GALLERY ───────────────────────────────────── */
+    .violation-body { max-height: 160px; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+    .vio-card {
+      font-size: 12px;
+      padding: 6px 10px;
+      background: var(--red-bg);
+      border-left: 4px solid var(--red);
+      border-radius: 4px;
+      color: var(--red);
+      font-weight: 600;
+    }
+
+    /* ── DETECTION HISTORY TABLE ─────────────────────────── */
+    #tab-db-viewport {
+      padding: 0;
+    }
+    .db-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 16px 20px;
+      background: rgba(255,255,255,0.7);
+      border-bottom: 1px solid var(--gray200);
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .db-toolbar h2 {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--gray900);
+      flex: 1;
+    }
+    .db-filter-select {
+      font-family: inherit;
+      font-size: 12px;
+      color: var(--gray700);
+      background: #fff;
+      border: 1px solid var(--gray300);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      outline: none;
+    }
+    .db-table-wrap {
+      overflow-x: auto;
+      max-height: 520px;
+      overflow-y: auto;
+    }
+    .db-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .db-table thead tr {
+      background: var(--gray900);
+      color: #fff;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    .db-table thead th {
+      padding: 11px 14px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .db-table tbody tr {
+      border-bottom: 1px solid var(--gray100);
+      transition: background 0.12s;
+    }
+    .db-table tbody tr:hover { background: var(--blue-bg); }
+    .db-table td {
+      padding: 10px 14px;
+      color: var(--gray700);
+      white-space: nowrap;
+    }
+    .db-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      border: 1px solid;
+    }
+    .db-badge.image { color: var(--blue); border-color: var(--blue-bd); background: var(--blue-bg); }
+    .db-badge.camera { color: #059669; border-color: #A7F3D0; background: #ECFDF5; }
+    .db-badge.video { color: #7C3AED; border-color: #DDD6FE; background: #F5F3FF; }
+    .db-comp-bar-wrap { width: 80px; height: 5px; background: var(--gray200); border-radius: 3px; overflow: hidden; margin-top: 2px; }
+    .db-comp-bar { height: 100%; border-radius: 3px; }
+    .db-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      border-top: 1px solid var(--gray200);
+      font-size: 12px;
+      color: var(--gray500);
+      background: rgba(255,255,255,0.5);
+      border-radius: 0 0 var(--radius) var(--radius);
+    }
+    .db-page-btns { display: flex; gap: 6px; }
+    .db-page-btn {
+      padding: 5px 12px;
+      border-radius: 5px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--gray300);
+      background: #fff;
+      color: var(--gray700);
+      transition: all 0.15s;
+    }
+    .db-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .db-page-btn:hover:not(:disabled) { background: var(--blue); color: #fff; border-color: var(--blue); }
+    .db-empty {
+      text-align: center;
+      padding: 48px 20px;
+      color: var(--gray400);
+      font-size: 13px;
+    }
+    .db-summary-strip {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 14px 20px;
+      background: linear-gradient(135deg, #EFF6FF, #F0FDF4);
+      border-bottom: 1px solid var(--gray200);
+    }
+    .db-stat-pill {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #fff;
+      border: 1px solid var(--gray200);
+      border-radius: 10px;
+      padding: 10px 18px;
+      min-width: 90px;
+      flex: 1;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .db-stat-num { font-size: 22px; font-weight: 700; color: var(--gray900); }
+    .db-stat-lbl { font-size: 10px; color: var(--gray500); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+  </style>
+</head>
+<body>
+
+<!-- Video tag has been relocated inside viewport-card relative wrapper -->
+
+<!-- ═══ HEADER ══════════════════════════════════════════════════ -->
+<header>
+  <div class="brand">
+    <div class="brand-icon">😷</div>
+    <div class="brand-name">MaskDetect</div>
+  </div>
+  <div class="pill-group">
+    <div class="conn-pill" id="conn-pill">
+      <span class="dot"></span>
+      <span id="conn-text">Checking…</span>
+    </div>
+    <div class="model-pill" id="model-pill">
+      <span class="dot"></span>
+      <span id="model-pill-txt">Initializing...</span>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ TABS NAVIGATION ══════════════════════════════════════════ -->
+<div class="tabs-wrap">
+  <div class="tabs">
+    <button class="tab-btn active" id="tab-cam-btn" onclick="switchTab('camera')">
+      Live Camera Stream
+    </button>
+    <button class="tab-btn" id="tab-img-btn" onclick="switchTab('image')">
+      Analyze Image File
+    </button>
+    <button class="tab-btn" id="tab-vid-btn" onclick="switchTab('video')">
+      Analyze Video File
+    </button>
+    <button class="tab-btn" id="tab-db-btn" onclick="switchTab('database')">
+      🗄️ Detection History
+    </button>
+  </div>
+</div>
+
+<!-- ═══ MAIN PANORAMIC GRID ══════════════════════════════════════ -->
+<main>
+  
+  <!-- Fallback Alert Banner -->
+  <div id="mode-banner">
+    ⚠️ &nbsp;<strong>Offline fallback mode.</strong>&nbsp; Face detection active. Flask backend offline. Start Flask backend for AI model processing.
+  </div>
+
+  <!-- UPPER PANORAMIC ROW -->
+  <div class="upper-row">
+    
+    <!-- MAIN VIEWPORT HUB -->
+    <div class="viewport-card">
+      <div id="camera-container" style="position: absolute; inset: 0; width: 100%; height: 100%; display: none; z-index: 1;">
+        <video id="video" autoplay muted playsinline
+          style="position: absolute; top:0; left:0;
+                 width:100%; height:100%;
+                 object-fit: cover;
+                 z-index: 1;">
+        </video>
+        <canvas id="overlay"
+          style="position: absolute; top:0; left:0;
+                 width:100%; height:100%;
+                 z-index: 2;
+                 pointer-events: none;">
+        </canvas>
+      </div>
+
+      <!-- FLOATING HUD: TELEMETRY (Top Left) -->
+      <div class="hud-overlay hud-telemetry">
+        <span id="hud-mode-display">Engine: <strong>—</strong></span>
+        <span id="hud-fps-display">FPS: <strong>0</strong></span>
+        <span id="hud-frames-display">Frames: <strong>0</strong></span>
+      </div>
+
+      <!-- FLOATING HUD: STATUS PILLS (Top Right) -->
+      <div class="hud-overlay hud-status">
+        <div class="hud-pill" id="hud-conn">
+          <span class="dot"></span>
+          <span id="hud-conn-text">Server Status</span>
+        </div>
+        <div class="hud-pill" id="hud-model">
+          <span class="dot"></span>
+          <span id="hud-model-text">AI State</span>
+        </div>
+      </div>
+
+      <!-- FLOATING HUD: CONTROLS (Bottom Center) -->
+      <div class="hud-overlay hud-controls">
+        <!-- Live Cam Controls -->
+        <div id="hud-cam-actions" style="display:flex;align-items:center;gap:10px">
+          <select class="hud-sel" id="hud-cam-sel"></select>
+          <button class="btn btn-outline" id="hud-snap-btn" onclick="saveActiveFrame()">Snapshot</button>
+          <button class="btn btn-primary" id="hud-start-btn" onclick="toggleCamera()">Start Camera</button>
+        </div>
+        <!-- Image Upload Controls -->
+        <div id="hud-img-actions" style="display:none;align-items:center;gap:10px">
+          <button class="btn btn-outline" onclick="clearImage()">Clear Image</button>
+          <button class="btn btn-primary" onclick="saveImageResult()">Save Result</button>
+        </div>
+        <!-- Video Upload Controls -->
+        <div id="hud-vid-actions" style="display:none;align-items:center;gap:10px">
+          <button class="btn btn-outline" onclick="clearVideo()">Clear Video</button>
+        </div>
+      </div>
+
+      <!-- FLOATING HUD: META & TIMESTAMP (Bottom Right) -->
+      <div class="hud-overlay hud-meta">
+        <span id="hud-timestamp">—</span>
+        Active Detections: <span id="hud-count" style="display:inline;font-weight:700">0</span>
+      </div>
+
+      <!-- Live Camera Viewport Contents -->
+      <div id="tab-camera-viewport" class="tab-content" style="height:100%">
+        <div class="cam-placeholder" id="cam-placeholder">
+          <span class="cam-icon">📷</span>
+          <p>Click <strong>Start Camera</strong> in the HUD to begin real-time surveillance.</p>
+        </div>
+        <div id="cam-error-msg">
+          <span class="err-icon">🚫</span>
+          <p>Webcam access blocked. Please check browser permissions and retry.</p>
+          <button class="btn btn-outline" style="margin-top:6px" onclick="location.reload()">Refresh Page</button>
+        </div>
+      </div>
+
+      <!-- Image Upload Viewport Contents -->
+      <div id="tab-image-viewport" class="tab-content" style="display:none;height:100%">
+        <div class="upload-area" id="upload-area">
+          <div class="drop-zone" id="drop-zone">
+            <input type="file" id="file-input" accept="image/*" onchange="handleFileSelect(event)">
+            <div class="dz-icon">📂</div>
+            <div class="dz-title">Drag & Drop Image File</div>
+            <div class="dz-sub">or click to browse local files</div>
+          </div>
+        </div>
+        <div id="img-preview-wrap" style="display:none;height:100%;width:100%">
+          <div class="img-canvas-wrap">
+            <canvas id="img-canvas"></canvas>
+            <div id="img-loader" class="img-loader" style="display:none">
+              <div class="spin"></div>
+              <div>Running neural analysis...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Video Upload Viewport Contents -->
+      <div id="tab-video-viewport" class="tab-content" style="display:none;height:100%;overflow-y:auto;padding:20px">
+        <!-- Video Offline Warning -->
+        <div id="vid-offline-warning" style="display:none;background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd);padding:12px;border-radius:var(--radius-sm);margin-bottom:15px;font-weight:600;text-align:center">
+          ⚠️ Backend required for video analysis. Please start the Flask backend server.
+        </div>
+        
+        <!-- STATE 1: Drop Zone -->
+        <div id="vid-upload-area" style="display:flex;align-items:center;justify-content:center;height:calc(100% - 40px);min-height:220px">
+          <div class="drop-zone" id="vid-drop-zone" onclick="document.getElementById('video-input').click()" style="width:100%;max-width:560px;cursor:pointer">
+            <input type="file" id="video-input" accept=".mp4,.avi,.mov" style="display:none" onchange="handleVideoSelect(event)">
+            <div class="dz-icon">🎬</div>
+            <div class="dz-title">Drop your video here or click to browse</div>
+            <div class="dz-sub">Supports .mp4, .avi, .mov — Max 100 MB</div>
+          </div>
+        </div>
+
+        <!-- STATE 2: File Selected — Shown after selection, hidden by default -->
+        <div id="vid-file-ready" style="display:none;align-items:center;justify-content:center;height:calc(100% - 40px);min-height:220px">
+          <div style="text-align:center;padding:40px 32px;background:rgba(255,255,255,0.85);border:2px solid var(--green-bd);border-radius:var(--radius);box-shadow:var(--shadow-lg);max-width:500px;width:100%">
+            <div style="font-size:52px;margin-bottom:16px">🎬</div>
+            <div style="font-size:18px;font-weight:700;color:var(--gray900);margin-bottom:6px" id="vid-file-name">—</div>
+            <div style="font-size:13px;color:var(--gray500);margin-bottom:28px" id="vid-file-size"></div>
+            <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+              <button id="analyse-vid-btn" onclick="startVideoAnalysis()" style="background:var(--green);color:white;border:none;padding:13px 36px;border-radius:var(--radius-sm);font-weight:700;font-size:15px;cursor:pointer;font-family:inherit;letter-spacing:0.3px;transition:all 0.2s;box-shadow:0 4px 14px rgba(16,185,129,0.35)" onmouseover="this.style.background='#059669';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='var(--green)';this.style.transform=''">▶ Analyse Video</button>
+              <button onclick="clearVideo()" style="background:transparent;color:var(--gray500);border:1px solid var(--gray300);padding:13px 24px;border-radius:var(--radius-sm);font-weight:600;font-size:14px;cursor:pointer;font-family:inherit;transition:all 0.2s" onmouseover="this.style.background='var(--gray100)'" onmouseout="this.style.background='transparent'">✕ Remove</button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Processing Progress -->
+        <div id="vid-processing-wrap" style="display:none;text-align:center;padding:40px 20px">
+          <div class="spin" style="margin: 0 auto 20px auto;border-top-color:var(--green)"></div>
+          <div style="font-weight:600;margin-bottom:10px;color:var(--gray800)" id="vid-progress-msg">Analysing video… processing frame 0 of 0</div>
+          <div style="width:100%;max-width:400px;background:var(--gray200);height:8px;border-radius:4px;margin:0 auto;overflow:hidden">
+            <div id="vid-progress-bar" style="width:0%;height:100%;background:var(--green);transition:width 0.15s"></div>
+          </div>
+        </div>
+        
+        <!-- Results Screen -->
+        <div id="vid-results-wrap" style="display:none;max-width:800px;margin:0 auto">
+          <div class="glass-card" style="padding:24px;border-radius:var(--radius);background:rgba(255,255,255,0.85);border:1px solid var(--glass-border);box-shadow:var(--shadow-lg);margin-bottom:20px">
+            <h3 style="font-size:18px;font-weight:700;color:var(--gray900);margin-bottom:16px;letter-spacing:-0.4px">VIDEO ANALYSIS COMPLETE</h3>
+            
+            <div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;font-size:14px;color:var(--gray600)">
+              <div>Total Frames: <strong id="res-total-frames" style="color:var(--gray900)">—</strong></div>
+              <div>Processed: <strong id="res-processed-frames" style="color:var(--gray900)">—</strong></div>
+              <div>Unique Persons: <strong id="res-total-faces" style="color:var(--gray900)">—</strong></div>
+              <div>FPS: <strong id="res-fps" style="color:var(--gray900)">30</strong></div>
+            </div>
+            
+            <div class="stats-boxes" style="display:flex;gap:12px;margin-bottom:20px">
+              <div style="flex:1;background:var(--green-bg);border:1px solid var(--green-bd);padding:12px;border-radius:var(--radius-sm);color:var(--green);font-weight:500;font-size:14px;text-align:center">
+                ✅ Mask On: <strong id="res-mask-on" style="font-size:16px">0</strong> persons
+              </div>
+              <div style="flex:1;background:var(--red-bg);border:1px solid var(--red-bd);padding:12px;border-radius:var(--radius-sm);color:var(--red);font-weight:500;font-size:14px;text-align:center">
+                ❌ No Mask: <strong id="res-no-mask" style="font-size:16px">0</strong> persons
+              </div>
+            </div>
+            
+            <!-- Compliance bar -->
+            <div style="margin-bottom:20px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:14px;font-weight:500">
+                <span>📊 Compliance Rate</span>
+                <span id="res-compliance" style="font-weight:700;color:var(--green)">0%</span>
+              </div>
+              <div style="width:100%;height:12px;background:var(--gray200);border-radius:6px;overflow:hidden">
+                <div id="res-compliance-bar" style="width:0%;height:100%;background:var(--green);transition:width 0.5s"></div>
+              </div>
+            </div>
+            
+            <!-- Clickable timeline -->
+            <div style="margin-bottom:20px">
+              <div style="font-size:13px;font-weight:500;color:var(--gray500);margin-bottom:8px">⚠️ Violations detected at:</div>
+              <div id="res-timeline" style="display:flex;flex-wrap:wrap;gap:8px">
+                <span style="font-size:12px;color:var(--gray400)">None detected</span>
+              </div>
+            </div>
+            
+            <!-- Video Player -->
+            <div style="width:100%;margin-bottom:20px;border-radius:var(--radius-sm);overflow:hidden;background:#000;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center">
+              <video id="res-video-player" controls style="width:100%;height:100%;object-fit:contain;display:none"></video>
+              <div id="res-video-placeholder" style="color:var(--gray400);font-size:14px;padding:20px;text-align:center">Click Preview to view annotated video</div>
+            </div>
+            
+            <!-- Actions -->
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-outline" id="preview-video-btn" onclick="previewAnnotatedVideo()" style="flex:1">▶ Preview Annotated Video</button>
+              <button class="btn btn-primary" id="download-video-btn" onclick="downloadAnnotatedVideo()" style="flex:1;background:var(--primary);color:white">⬇ Download Video</button>
+            </div>
+          </div>
+          
+          <!-- Collapsible frame results table -->
+          <div class="glass-card" style="padding:16px 20px;border-radius:var(--radius);background:rgba(255,255,255,0.85);border:1px solid var(--glass-border);box-shadow:var(--shadow-sm)">
+            <div onclick="toggleCollapsibleTable()" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+              <h4 style="font-size:14px;font-weight:600;color:var(--gray800)">Per-frame Analysis Report</h4>
+              <span id="collapsible-arrow" style="font-size:12px;color:var(--gray500)">▼</span>
+            </div>
+            <div id="collapsible-table-wrap" style="display:none;margin-top:12px;max-height:250px;overflow-y:auto;border-top:1px solid var(--gray200);padding-top:10px">
+              <table style="width:100%;border-collapse:collapse;font-size:13px;text-align:left">
+                <thead>
+                  <tr style="color:var(--gray500);border-bottom:1px solid var(--gray100)">
+                    <th style="padding:8px 4px">Frame</th>
+                    <th style="padding:8px 4px">Time</th>
+                    <th style="padding:8px 4px">Faces</th>
+                    <th style="padding:8px 4px">Result</th>
+                    <th style="padding:8px 4px">Confidence</th>
+                  </tr>
+                </thead>
+                <tbody id="res-table-body">
+                  <!-- Rows inserted dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- DETECTED INDIVIDUALS SIDE PANEL -->
+    <div class="glass-card faces-table-wrap">
+      <div class="faces-table-hdr">
+        <span>Detected Individuals</span>
+        <span id="face-count-txt" style="font-weight:700;color:var(--gray500)">0 faces</span>
+      </div>
+      <div class="faces-table-body" id="faces-table-body">
+        <div class="empty-row">No active face detections.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- LOWER GRID ROW (3 Columns) -->
+  <div class="lower-row">
+    
+    <!-- COLUMN 1: SYSTEM CONTROLS & SETTINGS -->
+    <div class="glass-card">
+      <div class="card-hdr"><span class="card-ttl">Settings & Parameters</span></div>
+      <div class="card-body">
+        <div class="setting-item flex-row">
+          <div class="setting-text">
+            <span class="setting-title">Acoustic Alarms</span>
+            <span class="setting-desc">Play dual-tone alert chimes when a violation occurs</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="audio-alert-toggle" checked>
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+        <div class="setting-item flex-row">
+          <div class="setting-text">
+            <span class="setting-title">Auto-Capture violations</span>
+            <span class="setting-desc">Log policy breaches of unmasked individuals</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="auto-capture-toggle" checked>
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+        <div class="setting-item flex-row" style="margin-top:10px">
+          <div class="setting-text">
+            <span class="setting-title">Email Alerts</span>
+            <span class="setting-desc">Send automatic email when no-mask violation detected</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="email-alert-toggle">
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+        <!-- Email config (shown when email-alert-toggle is on) -->
+        <div id="email-config" style="display:none;margin-top:10px;padding:10px;background:rgba(59,130,246,0.05);border:1px solid var(--blue-bd);border-radius:8px">
+          <div style="font-size:11px;font-weight:600;color:var(--gray600);margin-bottom:8px">Email Configuration</div>
+          <input type="email" id="email-to" placeholder="Recipient email" style="width:100%;padding:6px 8px;border:1px solid var(--gray300);border-radius:5px;font-family:inherit;font-size:11px;margin-bottom:6px;outline:none">
+          <input type="email" id="email-user" placeholder="Sender Gmail address" style="width:100%;padding:6px 8px;border:1px solid var(--gray300);border-radius:5px;font-family:inherit;font-size:11px;margin-bottom:6px;outline:none">
+          <input type="password" id="email-pass" placeholder="Gmail App Password" style="width:100%;padding:6px 8px;border:1px solid var(--gray300);border-radius:5px;font-family:inherit;font-size:11px;margin-bottom:6px;outline:none">
+          <button class="btn btn-primary" style="width:100%;font-size:11px" onclick="sendTestAlert()">📧 Send Test Alert</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- COLUMN 2: COMPLIANCE TIMELINE CHART -->
+    <div class="glass-card">
+      <div class="card-hdr">
+        <span class="card-ttl">Compliance Timeline</span>
+        <span style="font-size:10px;color:var(--gray400)">Real-time timeline (30s)</span>
+      </div>
+      <div class="chart-body">
+        <canvas id="analytics-chart" style="width:100%;height:115px;display:block"></canvas>
+      </div>
+    </div>
+
+    <!-- COLUMN 3: VIOLATION GALLERY -->
+    <div class="glass-card">
+      <div class="card-hdr">
+        <span class="card-ttl">Violation Gallery</span>
+        <button class="btn btn-outline" style="padding:2px 8px;font-size:10px" onclick="clearViolations()">Clear All</button>
+      </div>
+      <div class="violation-body" id="violation-list">
+        <div class="empty-state">No policy breaches captured.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ═══ DETECTION HISTORY TAB ══════════════════════════════════ -->
+  <div id="tab-db-viewport" style="display:none">
+    <div class="glass-card" style="overflow:visible">
+
+      <!-- Toolbar -->
+      <div class="db-toolbar">
+        <h2>🗄️ Detection History</h2>
+        <select class="db-filter-select" id="db-source-filter" onchange="dbPage=1;loadDetections()">
+          <option value="">All Sources</option>
+          <option value="camera">Camera</option>
+          <option value="image">Image</option>
+          <option value="video">Video</option>
+        </select>
+        <button class="btn btn-outline" onclick="loadDetections()" style="gap:5px">🔄 Refresh</button>
+        <button class="btn btn-outline" onclick="exportCSV()" style="gap:5px">⬇ Export CSV</button>
+        <button class="btn btn-outline" onclick="exportPDF()" style="gap:5px">📄 Export PDF</button>
+        <button class="btn btn-danger" onclick="clearAllDetections()" style="gap:5px">🗑 Clear All</button>
+      </div>
+
+      <!-- Summary strip -->
+      <div class="db-summary-strip" id="db-summary-strip">
+        <div class="db-stat-pill"><span class="db-stat-num" id="dbstat-total">—</span><span class="db-stat-lbl">Total Scans</span></div>
+        <div class="db-stat-pill"><span class="db-stat-num" id="dbstat-faces">—</span><span class="db-stat-lbl">Total Faces</span></div>
+        <div class="db-stat-pill" style="color:var(--green)"><span class="db-stat-num" id="dbstat-maskon" style="color:var(--green)">—</span><span class="db-stat-lbl">Mask On</span></div>
+        <div class="db-stat-pill" style="color:var(--red)"><span class="db-stat-num" id="dbstat-nomask" style="color:var(--red)">—</span><span class="db-stat-lbl">No Mask</span></div>
+        <div class="db-stat-pill"><span class="db-stat-num" id="dbstat-comp">—</span><span class="db-stat-lbl">Avg Compliance</span></div>
+      </div>
+
+      <!-- Table -->
+      <div class="db-table-wrap">
+        <table class="db-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Source</th>
+              <th>Timestamp</th>
+              <th>Faces</th>
+              <th>Mask On</th>
+              <th>No Mask</th>
+              <th>Compliance</th>
+              <th>File</th>
+            </tr>
+          </thead>
+          <tbody id="db-table-body">
+            <tr><td colspan="8" class="db-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div class="db-pagination">
+        <span id="db-page-info">Page 1 of 1 &nbsp;·&nbsp; 0 records</span>
+        <div class="db-page-btns">
+          <button class="db-page-btn" id="db-prev-btn" onclick="dbChangePage(-1)" disabled>‹ Prev</button>
+          <button class="db-page-btn" id="db-next-btn" onclick="dbChangePage(1)"  disabled>Next ›</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</main>
+
+<!-- ═══ JAVASCRIPT ═══════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+const BACKEND_URL    = 'http://localhost:5000';
+const POLL_INTERVAL  = 200;
+const HEALTH_INTERVAL= 6000;
+
+// ── State ───────────────────────────────────────────────────────
+let videoStream      = null;
+let pollTimer        = null;
+let healthTimer      = null;
+let backendOnline    = false;
+let backendIsDemo    = false;
+let cameraRunning    = false;
+let blazeModel       = null;
+let currentImageData = null;
+let healthFailCount  = 0;  // require 2 consecutive failures before going offline
+
+// Telemetry state
+let totalFrames      = 0;
+let fpsCount         = 0;
+let lastFpsTs        = Date.now();
+let smoothFps        = 0;
+let fpsRing          = [];
+
+// Feature history state
+let audioCtx         = null;
+let lastBeepTime     = 0;
+let lastCaptureTime  = 0;
+const captureCooldownMs = 1500;
+const maxHistoryLen  = 30;
+const complianceHistory = [];
+const violationsList = [];
+const maxViolations  = 8;
+let activeTab        = 'camera';
+
+// ── DOM refs ────────────────────────────────────────────────────
+const video          = document.getElementById('video');
+const canvas         = document.getElementById('overlay');
+const ctx            = canvas.getContext('2d');
+const placeholder    = document.getElementById('cam-placeholder');
+const errMsg         = document.getElementById('cam-error-msg');
+
+const connPill       = document.getElementById('conn-pill');
+const connText       = document.getElementById('conn-text');
+const modelPill      = document.getElementById('model-pill');
+const modelPillTxt   = document.getElementById('model-pill-txt');
+
+// Result panel refs (might be missing in HTML)
+const resultInd      = document.getElementById('result-ind')   || document.getElementById('resultInd');
+const resultLabel    = document.getElementById('result-label') || document.getElementById('resultLabel');
+const resultSub      = document.getElementById('result-sub')   || document.getElementById('resultSub');
+const confValue      = document.getElementById('conf-value')   || document.getElementById('confValue');
+const confBar        = document.getElementById('conf-bar')     || document.getElementById('confBar');
+
+// HUD refs
+const hudMode        = document.getElementById('hud-mode-display');
+const hudFps         = document.getElementById('hud-fps-display');
+const hudFrames      = document.getElementById('hud-frames-display');
+const hudConn        = document.getElementById('hud-conn');
+const hudConnText    = document.getElementById('hud-conn-text');
+const hudModel       = document.getElementById('hud-model');
+const hudModelText   = document.getElementById('hud-model-text');
+const hudCamActions  = document.getElementById('hud-cam-actions');
+const hudImgActions  = document.getElementById('hud-img-actions');
+const hudTimestamp   = document.getElementById('hud-timestamp');
+const hudCount       = document.getElementById('hud-count');
+const hudStartBtn    = document.getElementById('hud-start-btn');
+const hudSnapBtn     = document.getElementById('hud-snap-btn');
+const hudCamSel      = document.getElementById('hud-cam-sel');
+
+// Panels
+const facesTableBody = document.getElementById('faces-table-body');
+const faceCountTxt   = document.getElementById('face-count-txt');
+const modeBanner     = document.getElementById('mode-banner');
+
+// Image canvas
+const imgCv          = document.getElementById('img-canvas');
+const imgCtx         = imgCv.getContext('2d');
+
+const cropCv         = document.createElement('canvas');
+cropCv.width = cropCv.height = 224;
+const cropCtx        = cropCv.getContext('2d');
+
+// ── STATE: camera session counters ──────────────────────────
+let camSessionFaces  = 0;
+let camSessionMaskOn = 0;
+let camSessionNoMask = 0;
+
+async function saveCameraSession() {
+  if (!backendOnline || camSessionFaces === 0) return;
+  try {
+    await fetch(`${BACKEND_URL}/camera/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        total_faces: camSessionFaces,
+        mask_on:     camSessionMaskOn,
+        no_mask:     camSessionNoMask
+      }),
+      signal: AbortSignal.timeout(5000)
+    });
+    console.log('[camera] Session saved to DB:', camSessionFaces, 'faces');
+  } catch(e) {
+    console.warn('[camera] Session save failed:', e.message);
+  }
+  camSessionFaces = camSessionMaskOn = camSessionNoMask = 0;
+}
+
+// ── TABS NAVIGATION ──────────────────────────────────────────
+function switchTab(tab) {
+  activeTab = tab;
+  if (tab !== 'camera' && cameraRunning) {
+    stopCamera();
+  }
+  const isDB = tab === 'database';
+  document.getElementById('tab-camera-viewport').style.display = tab === 'camera'   ? 'block' : 'none';
+  document.getElementById('tab-image-viewport').style.display  = tab === 'image'    ? 'block' : 'none';
+  document.getElementById('tab-video-viewport').style.display  = tab === 'video'    ? 'block' : 'none';
+  document.getElementById('tab-db-viewport').style.display     = isDB               ? 'block' : 'none';
+
+  // Hide the camera live-view grid when on DB tab
+  const upperRow = document.querySelector('.upper-row');
+  const lowerRow = document.querySelector('.lower-row');
+  if (upperRow) upperRow.style.display = isDB ? 'none' : '';
+  if (lowerRow) lowerRow.style.display = isDB ? 'none' : '';
+  
+  hudCamActions.style.display = tab === 'camera' ? 'flex' : 'none';
+  hudImgActions.style.display = tab === 'image'  ? 'flex' : 'none';
+  document.getElementById('hud-vid-actions').style.display = tab === 'video' ? 'flex' : 'none';
+  
+  document.getElementById('tab-cam-btn').className = 'tab-btn' + (tab === 'camera'   ? ' active' : '');
+  document.getElementById('tab-img-btn').className = 'tab-btn' + (tab === 'image'    ? ' active' : '');
+  document.getElementById('tab-vid-btn').className = 'tab-btn' + (tab === 'video'    ? ' active' : '');
+  document.getElementById('tab-db-btn').className  = 'tab-btn' + (isDB              ? ' active' : '');
+  
+  document.getElementById('camera-container').style.display = (tab === 'camera' && cameraRunning) ? 'block' : 'none';
+  hudFps.style.display = (tab === 'camera') ? '' : 'none';
+
+  if (isDB) loadDetections();
+}
+
+// ── BACKEND HEALTH CHECK ──────────────────────────────────────
+async function checkBackend() {
+  try {
+    const res  = await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(7000) });
+    const data = await res.json();
+    if (res.ok) {
+      healthFailCount = 0;
+      setBackendStatus(true, data.demo_mode);
+    } else {
+      healthFailCount++;
+      if (healthFailCount >= 2) setBackendStatus(false, true);
+    }
+  } catch {
+    healthFailCount++;
+    if (healthFailCount >= 2) setBackendStatus(false, true);
+  }
+}
+
+function setBackendStatus(online, isDemo) {
+  backendOnline = online;
+  backendIsDemo = isDemo;
+  connPill.className = `conn-pill ${online ? 'online' : 'offline'}`;
+  connText.textContent = online ? (isDemo ? 'Demo Mode' : 'Backend Online') : 'Offline';
+  
+  modeBanner.className = (!online && cameraRunning) ? 'visible' : '';
+  
+  hudConn.className = `hud-pill ${online ? 'green' : 'red'}`;
+  hudConnText.textContent = online ? 'Server' : 'Offline';
+  hudMode.innerHTML = `Engine: <strong>${online ? 'Server' : 'Offline'}</strong>`;
+  
+  // Update video offline warning
+  const vidOfflineWarn = document.getElementById('vid-offline-warning');
+  if (vidOfflineWarn) {
+    vidOfflineWarn.style.display = online ? 'none' : 'block';
+  }
+  const analyseVidBtn = document.getElementById('analyse-vid-btn');
+  if (analyseVidBtn) {
+    analyseVidBtn.disabled = !online;
+    analyseVidBtn.style.opacity = online ? '1' : '0.5';
+    analyseVidBtn.style.cursor  = online ? 'pointer' : 'not-allowed';
+    analyseVidBtn.style.background = online ? 'var(--green)' : '#94A3B8';
+  }
+  
+  updateModelPill();
+}
+
+function updateModelPill() {
+  const ready = backendOnline && !backendIsDemo;
+  hudModel.className  = `hud-pill ${ready ? 'green' : 'blue'}`;
+  hudModelText.textContent = ready ? 'MobileNetV2' : 'BlazeFace';
+  modelPill.className = `model-pill ${ready ? 'online' : 'active'}`;
+  modelPillTxt.textContent = ready ? 'Trained Model' : 'Browser Face Detector';
+}
+
+// ── OFFLINE MODEL (BlazeFace fallback for coordinates only) ──
+async function loadBlazeFace() {
+  if (blazeModel) return;
+  try {
+    blazeModel = await blazeface.load();
+    updateModelPill();
+    console.log('[AI] BlazeFace loaded ✓');
+  } catch (e) {
+    console.warn('[AI] BlazeFace load failed:', e);
+  }
+}
+
+// ── CAMERA Survaillance ───────────────────────────────────────
+async function toggleCamera() {
+  if (cameraRunning) { stopCamera(); return; }
+  hudStartBtn.disabled = true;
+  hudStartBtn.textContent = 'StartingSurveillance...';
+  await startCamera();
+}
+
+async function startCamera(deviceId = null) {
+  try {
+    if (videoStream) videoStream.getTracks().forEach(t => t.stop());
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480 }, audio: false
+    });
+    videoStream = stream;
+    video.srcObject = stream;
+    video.onloadedmetadata = () => {
+      canvas.width  = video.videoWidth  || 640;
+      canvas.height = video.videoHeight || 480;
+    };
+    video.onresize = () => {
+      if (video.videoWidth > 0) {
+        canvas.width  = video.videoWidth;
+        canvas.height = video.videoHeight;
+      }
+    };
+    video.onloadeddata = () => {
+      if (video.videoWidth > 0) {
+        canvas.width  = video.videoWidth;
+        canvas.height = video.videoHeight;
+      }
+      video.play();
+    };
+
+    placeholder.classList.add('hidden');
+    errMsg.classList.remove('visible');
+    cameraRunning = true;
+    document.getElementById('camera-container').style.display = 'block';
+
+    hudStartBtn.className = 'btn btn-danger';
+    hudStartBtn.innerHTML = 'Stop Camera';
+    hudStartBtn.disabled  = false;
+    hudSnapBtn.disabled   = false;
+
+    await listCameras();
+    await checkBackend();
+    startCameraLoop(); // kick off interval loop
+  } catch (e) {
+    console.error('Camera startup failed:', e);
+    errMsg.classList.add('visible');
+    hudStartBtn.disabled  = false;
+    hudStartBtn.innerHTML = 'Start Camera';
+    hudStartBtn.className = 'btn btn-primary';
+  }
+}
+
+function stopCamera() {
+  // Save camera session to DB before stopping
+  saveCameraSession();
+
+  videoStream?.getTracks().forEach(t => t.stop());
+  clearInterval(pollTimer);
+  cameraRunning = false;
+  videoStream   = null;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  placeholder.classList.remove('hidden');
+  document.getElementById('camera-container').style.display = 'none';
+
+  hudStartBtn.className = 'btn btn-primary';
+  hudStartBtn.innerHTML = 'Start Camera';
+  hudStartBtn.disabled  = false;
+  hudSnapBtn.disabled   = true;
+
+  modeBanner.className  = '';
+  hudFps.innerHTML      = 'FPS: <strong>0</strong>';
+  hudFrames.innerHTML   = 'Frames: <strong>0</strong>';
+  hudTimestamp.textContent = '—';
+  hudCount.textContent  = '0';
+  faceCountTxt.textContent = '0 faces';
+  
+  updateFaceTable([]);
+}
+
+async function listCameras() {
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    hudCamSel.innerHTML = '';
+    devs.filter(d => d.kind === 'videoinput').forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      o.text  = d.label || `Surveillance Cam ${i + 1}`;
+      hudCamSel.appendChild(o);
+    });
+    const activeId = videoStream?.getVideoTracks()[0]?.getSettings().deviceId;
+    if (activeId) hudCamSel.value = activeId;
+    hudCamSel.onchange = () => startCamera(hudCamSel.value);
+  } catch { /* ignored */ }
+}
+
+let isProcessing = false;
+let lastFaces    = [];
+let fpsFrames    = 0;
+let fpsTimer     = Date.now();
+
+// ── ANALYSIS LOOP ─────────────────────────────────────────────
+function startCameraLoop() {
+  clearInterval(pollTimer);
+  let pendingRequest = false;
+
+  pollTimer = setInterval(() => {
+    if (!cameraRunning || video.readyState < 2) return;
+
+    // FPS counter
+    fpsFrames++;
+    const now = Date.now();
+    if (now - fpsTimer >= 1000) {
+      smoothFps = fpsFrames;
+      fpsFrames = 0;
+      fpsTimer  = now;
+      hudFps.innerHTML    = `FPS: <strong>${smoothFps}</strong>`;
+      hudFrames.innerHTML = `Frames: <strong>${++totalFrames}</strong>`;
+    }
+
+    // Always redraw last known boxes so they stay visible between requests
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (lastFaces.length > 0) drawBoxesCamera(ctx, lastFaces, canvas.width);
+
+    // Skip if a request is already in-flight
+    if (pendingRequest) return;
+
+    // Capture frame at 320x240
+    const tmpCv = document.createElement('canvas');
+    tmpCv.width = 320; tmpCv.height = 240;
+    tmpCv.getContext('2d').drawImage(video, 0, 0, 320, 240);
+    const b64    = tmpCv.toDataURL('image/jpeg', 0.75);
+    const scaleX = (video.videoWidth  || 640) / 320;
+    const scaleY = (video.videoHeight || 480) / 240;
+
+    pendingRequest = true;
+    runDetection(b64, 'camera', scaleX, scaleY).then(faces => {
+      pendingRequest = false;
+      lastFaces = faces;
+
+      // Draw fresh result
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBoxesCamera(ctx, faces, canvas.width);
+
+      hudTimestamp.textContent = new Date().toLocaleTimeString();
+      hudCount.textContent     = faces.length;
+      faceCountTxt.textContent = faces.length === 1 ? '1 face' : `${faces.length} faces`;
+
+      if (faces.length > 0) {
+        const mOn = faces.filter(f => f.label === 'Mask On').length;
+        const nMk = faces.filter(f => f.label === 'No Mask').length;
+        camSessionFaces  = Math.max(camSessionFaces,  faces.length);
+        camSessionMaskOn = Math.max(camSessionMaskOn, mOn);
+        camSessionNoMask = Math.max(camSessionNoMask, nMk);
+      }
+
+      if (faces.length === 0) {
+        resetResult('No faces detected');
+        updateFaceTable([]);
+      } else {
+        let dom = faces[0];
+        for (const f of faces) { if (f.label === 'No Mask') { dom = f; break; } }
+        setResult(dom.label, dom.confidence, faces.length);
+        updateFaceTable(faces);
+        checkViolations(faces);
+      }
+    }).catch(() => {
+      pendingRequest = false;
+      // keep last boxes visible on error — do not clear
+    });
+  }, 250);
+}
+
+// ── DETECTION GATEWAY ─────────────────────────────────────────
+async function runDetection(b64OrCanvas, source, scaleX = 1.0, scaleY = 1.0) {
+  if (backendOnline) {
+    return await callBackend(b64OrCanvas, scaleX, scaleY);
+  } else {
+    if (!blazeModel) return [];
+    const src = source === 'camera' ? video : (b64OrCanvas._el || null);
+    if (!src) return [];
+    return await runOfflineFaceDetection(src);
+  }
+}
+
+// ── BACKEND prediction API CALL ───────────────────────────────
+async function callBackend(b64, scaleX = 1.0, scaleY = 1.0) {
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8000); // 8s timeout
+
+    // Choose endpoint based on active tab
+    const endpoint = activeTab === 'image' ? '/predict/image' : '/predict';
+    const res  = await fetch(`${BACKEND_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: b64 }),
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) return [];
+    const data = await res.json();
+
+    return (data.faces || []).map(f => {
+      let thumb = null;
+      let bx, by, bw, bh;
+      if (f.box) {
+        if (Array.isArray(f.box)) {
+          [bx, by, bw, bh] = f.box;
+        } else {
+          bx = f.box.x; by = f.box.y; bw = f.box.w; bh = f.box.h;
+        }
+      }
+
+      // Camera: scale box from 320x240 capture space back to canvas resolution
+      if (bx !== undefined && activeTab === 'camera') {
+        bx *= scaleX; by *= scaleY; bw *= scaleX; bh *= scaleY;
+        cropCtx.clearRect(0, 0, 224, 224);
+        cropCtx.drawImage(canvas, Math.max(0,bx-bw*0.1), Math.max(0,by-bh*0.1), bw*1.2, bh*1.2, 0, 0, 224, 224);
+        thumb = cropCv.toDataURL('image/jpeg', 0.55);
+      }
+      // Image: thumbnail set in analyseImage after coordScale applied
+
+      const confPct = f.confidence > 1.0 ? Math.round(f.confidence) : Math.round(f.confidence * 100);
+      return { label: f.label, confidence: confPct, box: [bx, by, bw, bh], thumb };
+    });
+  } catch (e) {
+    console.warn('[backend] predict failed:', e.message || e);
+    return [];
+  }
+}
+
+// ── OFFLINE COORDINATES ONLY (BlazeFace fallback) ─────────────
+async function runOfflineFaceDetection(sourceEl) {
+  try {
+    const preds = await blazeModel.estimateFaces(sourceEl, false);
+    const faces = [];
+
+    for (const p of preds) {
+      const [x1, y1] = p.topLeft;
+      const [x2, y2] = p.bottomRight;
+      const w = x2 - x1, h = y2 - y1;
+
+      cropCtx.clearRect(0, 0, 224, 224);
+      const padX = w * 0.25, padY = h * 0.25;
+      cropCtx.drawImage(
+        sourceEl,
+        Math.max(0, x1 - padX), Math.max(0, y1 - padY),
+        w + padX * 2, h + padY * 2,
+        0, 0, 224, 224
+      );
+      const thumb = cropCv.toDataURL('image/jpeg', 0.6);
+
+      faces.push({
+        label: 'No Mask', // Default to no mask if offline, no guesses
+        confidence: 0,
+        box: [Math.round(x1), Math.round(y1), Math.round(w), Math.round(h)],
+        thumb,
+        offline: true,
+      });
+    }
+    return faces;
+  } catch (e) {
+    console.warn('BlazeFace offline detection error:', e);
+    return [];
+  }
+}
+
+// ── DRAG & DROP FILE SURVEILLANCE ─────────────────────────────
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (!file || !file.type.startsWith('image/')) return;
+  switchTab('image');
+  const reader = new FileReader();
+  reader.onload = ev => loadImage(ev.target.result);
+  reader.readAsDataURL(file);
+}
+
+function loadImage(src) {
+  const img = new Image();
+  img.onload = async () => {
+    // Set canvas to exact image dimensions — prevents half-black screen
+    imgCv.width  = img.naturalWidth;
+    imgCv.height = img.naturalHeight;
+    imgCv.style.width     = '';
+    imgCv.style.height    = '';
+    imgCv.style.maxWidth  = '100%';
+    imgCv.style.maxHeight = '100%';
+    imgCv.style.objectFit = 'contain';
+    imgCv.style.transform = '';  // no mirror on image canvas
+    const scale = 1.0;  // canvas == original, no scale needed
+    imgCtx.drawImage(img, 0, 0, imgCv.width, imgCv.height);
+
+    document.getElementById('upload-area').style.display      = 'none';
+    document.getElementById('img-preview-wrap').style.display = 'block';
+    document.getElementById('img-loader').style.display       = 'flex';
+
+    // Safety net: hide loader after 15s no matter what
+    const safetyTimer = setTimeout(() => {
+      document.getElementById('img-loader').style.display = 'none';
+    }, 15000);
+
+    currentImageData = { img, scale };
+    try {
+      await analyseImage(img, scale);
+    } catch(e) {
+      console.error('analyseImage error:', e);
+    } finally {
+      clearTimeout(safetyTimer);
+      document.getElementById('img-loader').style.display = 'none';
+    }
+  };
+  img.src = src;
+}
+
+// Helper: downscale image to canvas max-dim and get base64 (off-main-thread friendly)
+function imageToBase64(img, maxDim, quality) {
+  return new Promise(resolve => {
+    // Use setTimeout(0) to yield to browser before heavy toDataURL
+    setTimeout(() => {
+      const sc = Math.min(1.0, maxDim / Math.max(img.width || 1, img.height || 1));
+      const w  = Math.max(1, Math.round((img.width  || 1) * sc));
+      const h  = Math.max(1, Math.round((img.height || 1) * sc));
+      const c  = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve({ b64: c.toDataURL('image/jpeg', quality), sc, w, h });
+    }, 0);
+  });
+}
+
+async function analyseImage(img, scale) {
+  let faces = [];
+
+  if (backendOnline) {
+    // Send at max 1200px wide for backend quality
+    const { b64, sc: bSc } = await imageToBase64(img, 1200, 0.92);
+
+    // /predict/image returns boxes in the bSc-scaled image coordinate space
+    // (backend upscales to 1200px internally and scales back to bSc space).
+    // We need to map those to canvas pixel coords (naturalWidth x naturalHeight).
+    // coordScale = 1/bSc converts bSc-space → natural pixel space.
+    const coordScale = 1.0 / bSc;
+
+    const rawFaces = await callBackend(b64);
+    faces = rawFaces.map(f => {
+      if (!f.box) return f;
+      const [bx, by, bw, bh] = f.box;
+      const sx = bx * coordScale, sy = by * coordScale;
+      const sw = bw * coordScale, sh = bh * coordScale;
+      // Thumbnail from original image at canvas coords
+      cropCtx.clearRect(0, 0, 224, 224);
+      cropCtx.drawImage(img,
+        Math.max(0, sx - sw * 0.1), Math.max(0, sy - sh * 0.1),
+        sw * 1.2, sh * 1.2, 0, 0, 224, 224);
+      const thumb = cropCv.toDataURL('image/jpeg', 0.6);
+      return { ...f, box: [sx, sy, sw, sh], thumb };
+    });
+  } else {
+    if (!blazeModel) {
+      renderResults([]);
+      return;
+    }
+    const tmp = document.createElement('canvas');
+    tmp.width  = img.width;
+    tmp.height = img.height;
+    tmp.getContext('2d').drawImage(img, 0, 0);
+    tmp._el = tmp;
+    const raw = await runOfflineFaceDetection(tmp);
+    faces = raw.map(f => {
+      if (!f.box) return f;
+      const [bx, by, bw, bh] = f.box;
+      return { ...f, box: [bx * scale, by * scale, bw * scale, bh * scale] };
+    });
+  }
+
+  imgCtx.clearRect(0, 0, imgCv.width, imgCv.height);
+  imgCtx.drawImage(img, 0, 0, imgCv.width, imgCv.height);
+  drawBoxes(imgCtx, faces);
+  renderResults(faces);
+}
+
+function clearImage() {
+  document.getElementById('upload-area').style.display      = 'flex';
+  document.getElementById('img-preview-wrap').style.display = 'none';
+  document.getElementById('file-input').value = '';
+  imgCtx.clearRect(0, 0, imgCv.width, imgCv.height);
+  currentImageData = null;
+  resetResult();
+  updateFaceTable([]);
+  hudCount.textContent = '0';
+  hudTimestamp.textContent = '—';
+  faceCountTxt.textContent = '0 faces';
+}
+
+function saveImageResult() {
+  const a = document.createElement('a');
+  a.download = `mask_result_${Date.now()}.png`;
+  a.href = imgCv.toDataURL('image/png');
+  a.click();
+}
+
+function saveActiveFrame() {
+  if (!cameraRunning) return;
+  const tempCv = document.createElement('canvas');
+  tempCv.width = canvas.width;
+  tempCv.height = canvas.height;
+  const tempCtx = tempCv.getContext('2d');
+  
+  // Draw video (unmirrored to match screen preview)
+  tempCtx.drawImage(video, 0, 0, tempCv.width, tempCv.height);
+  
+  // Overlay canvas detections on top
+  tempCtx.drawImage(canvas, 0, 0);
+  
+  const a = document.createElement('a');
+  a.download = `snapshot_${Date.now()}.png`;
+  a.href = tempCv.toDataURL('image/png');
+  a.click();
+}
+
+// ── SAFE ROUNDED RECT (cross-browser) ────────────────────────
+function roundRect(ctx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+// ── DRAW BOUNDING BOXES ───────────────────────────────────────
+function drawBoxesCamera(context, faces, canvasW) {
+  faces.forEach(f => {
+    if (!f.box) return;
+    let [x, y, w, h] = f.box.map(Math.round);
+    const color = f.label === 'Mask On' ? '#10B981' : '#EF4444';
+    const bg    = f.label === 'Mask On' ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)';
+    context.fillStyle = bg;
+    roundRect(context, x, y, w, h, 6); context.fill();
+    context.strokeStyle = color; context.lineWidth = 2.5;
+    roundRect(context, x, y, w, h, 6); context.stroke();
+    const labelText = `${f.label} ${f.confidence}%`;
+    context.font = 'bold 13px Outfit, system-ui';
+    const tw = context.measureText(labelText).width;
+    const lh = 24;
+    const ly = y >= lh + 4 ? y - lh - 4 : y + 4;
+    context.fillStyle = color;
+    roundRect(context, x, ly, tw + 16, lh, 4); context.fill();
+    context.fillStyle = '#fff';
+    context.fillText(labelText, x + 8, ly + 16);
+  });
+}
+
+// Image / general: no X flip
+function drawBoxes(context, faces) {
+  faces.forEach(f => {
+    if (!f.box) return;
+    let [x, y, w, h] = f.box.map(Math.round);
+    const color = f.label === 'Mask On' ? '#10B981' : '#EF4444';
+    const bg    = f.label === 'Mask On' ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)';
+    context.fillStyle = bg;
+    roundRect(context, x, y, w, h, 6); context.fill();
+    context.strokeStyle = color; context.lineWidth = 2.5;
+    roundRect(context, x, y, w, h, 6); context.stroke();
+    const labelText = `${f.label} ${f.confidence}%`;
+    context.font = 'bold 13px Outfit, system-ui';
+    const tw = context.measureText(labelText).width;
+    const lh = 24; const ly = y >= lh + 4 ? y - lh - 4 : y + 4;
+    context.fillStyle = color;
+    roundRect(context, x, ly, tw + 16, lh, 4); context.fill();
+    context.fillStyle = '#fff';
+    context.fillText(labelText, x + 8, ly + 16);
+    if (f.offline) {
+      context.fillStyle = 'rgba(255,255,255,0.7)';
+      context.font = '10px Outfit, system-ui';
+      context.fillText('No Model', x + 6, y + h - 6);
+    }
+  });
+}
+
+// ── RENDER RESULTS ────────────────────────────────────────────
+function renderResults(faces) {
+  if (activeTab === 'camera') {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawBoxesCamera(ctx, faces, canvas.width);
+  }
+
+  const timeStr = new Date().toLocaleTimeString();
+  hudTimestamp.textContent = timeStr;
+  hudCount.textContent     = faces.length;
+  faceCountTxt.textContent = faces.length === 1 ? '1 face' : `${faces.length} faces`;
+
+  if (faces.length === 0) {
+    resetResult(activeTab === 'camera' ? 'No faces detected' : 'No faces found in image');
+    updateFaceTable([]);
+    return;
+  }
+
+  // Determine dominant card state (Binary: Red dominates if anyone has No Mask)
+  let dom = faces[0];
+  for (const f of faces) {
+    if (f.label === 'No Mask') { dom = f; break; }
+  }
+
+  setResult(dom.label, dom.confidence, faces.length);
+  updateFaceTable(faces);
+  checkViolations(faces);
+}
+
+function setResult(label, conf, count) {
+  const isGreen = label === 'Mask On';
+  const cls     = isGreen ? 'green' : 'red';
+  const text    = isGreen ? '✓ Mask On' : '✗ No Mask';
+  const emoji   = isGreen ? '✅' : '❌';
+  const sub     = count === 1 ? '1 person detected' : `${count} people detected`;
+
+  const card = document.getElementById('conn-pill').parentElement.parentElement.parentElement.querySelector('.result-panel');
+  if (card) {
+    card.className  = `result-panel state-${isGreen ? 'mask' : 'nomask'}`;
+  }
+  if (resultInd) {
+    resultInd.className   = cls;
+    resultInd.textContent = emoji;
+  }
+  if (resultLabel) {
+    resultLabel.className = cls;
+    resultLabel.textContent = text;
+  }
+  if (resultSub) {
+    resultSub.textContent = sub;
+  }
+  if (confValue) {
+    confValue.textContent = conf + '%';
+  }
+  if (confBar) {
+    confBar.style.width   = conf + '%';
+    confBar.className     = cls;
+  }
+
+  if (!isGreen) beep();
+}
+
+function resetResult(msg = 'Waiting for input…') {
+  const card = document.getElementById('conn-pill').parentElement.parentElement.parentElement.querySelector('.result-panel');
+  if (card) {
+    card.className  = 'result-panel';
+  }
+  if (resultInd) {
+    resultInd.className   = 'neutral';
+    resultInd.textContent = '🎭';
+  }
+  if (resultLabel) {
+    resultLabel.className = '';
+    resultLabel.textContent = msg;
+  }
+  if (resultSub) {
+    resultSub.textContent = cameraRunning ? 'Surveillance Active…' : 'Start camera or upload image';
+  }
+  if (confValue) {
+    confValue.textContent = '—';
+  }
+  if (confBar) {
+    confBar.style.width   = '0%';
+    confBar.className     = '';
+  }
+}
+
+function updateFaceTable(faces) {
+  if (faces.length === 0) {
+    facesTableBody.innerHTML = '<div class="empty-row">No active face detections.</div>';
+    return;
+  }
+  facesTableBody.innerHTML = faces.map((f, i) => {
+    const c = f.label === 'Mask On' ? 'green' : 'red';
+    const thumbHtml = f.thumb
+      ? `<div class="f-thumb"><img src="${f.thumb}" alt="face"></div>`
+      : `<div class="f-thumb">👤</div>`;
+    const tagLabel = f.offline ? 'Approx' : f.label;
+    return `
+      <div class="face-row">
+        ${thumbHtml}
+        <div class="f-info">
+          <div class="f-name">Person ${i + 1}</div>
+          <div class="f-bar-wrap"><div class="f-bar ${c}" style="width:${f.confidence}%"></div></div>
+          <div class="f-meta"><span>${f.confidence}% confidence</span></div>
+        </div>
+        <span class="f-badge ${c}">${tagLabel}</span>
+      </div>`;
+  }).join('');
+}
+
+// ── EMAIL ALERT ───────────────────────────────────────────────
+document.getElementById('email-alert-toggle').addEventListener('change', function() {
+  document.getElementById('email-config').style.display = this.checked ? 'block' : 'none';
+});
+
+let lastEmailTime = 0;
+const EMAIL_COOLDOWN_MS = 60000; // max one email per minute
+
+async function sendViolationEmail(violationCount) {
+  if (!document.getElementById('email-alert-toggle').checked) return;
+  const now = Date.now();
+  if (now - lastEmailTime < EMAIL_COOLDOWN_MS) return;
+  const to   = document.getElementById('email-to').value.trim();
+  const user = document.getElementById('email-user').value.trim();
+  const pass = document.getElementById('email-pass').value.trim();
+  if (!to || !user || !pass) return;
+  lastEmailTime = now;
+  const body = `Mask Violation Alert!\n\n${violationCount} person(s) detected without a mask.\nTime: ${new Date().toLocaleString()}\n\nThis alert was sent automatically by MaskDetect.`;
+  try {
+    await fetch(`${BACKEND_URL}/alert/email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, smtp_user: user, smtp_pass: pass, body }),
+      signal: AbortSignal.timeout(20000)
+    });
+    console.log('[email] Violation alert sent to', to);
+  } catch(e) {
+    console.warn('[email] Send failed:', e.message);
+  }
+}
+
+async function sendTestAlert() {
+  const to   = document.getElementById('email-to').value.trim();
+  const user = document.getElementById('email-user').value.trim();
+  const pass = document.getElementById('email-pass').value.trim();
+  if (!to || !user || !pass) { alert('Please fill in all email fields.'); return; }
+  try {
+    const r = await fetch(`${BACKEND_URL}/alert/email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to, smtp_user: user, smtp_pass: pass,
+        subject: '[MaskDetect] Test Alert',
+        body: `This is a test alert from MaskDetect.\nSent at: ${new Date().toLocaleString()}`
+      }),
+      signal: AbortSignal.timeout(20000)
+    });
+    const d = await r.json();
+    alert(r.ok ? `✅ ${d.message}` : `❌ ${d.error}`);
+  } catch(e) {
+    alert('Failed to send: ' + e.message);
+  }
+}
+
+// ── AUDIO CHIMES ──────────────────────────────────────────────
+function beep() {
+  if (!document.getElementById('audio-alert-toggle').checked) return;
+  const now = Date.now();
+  if (now - lastBeepTime < 1500) return;
+  lastBeepTime = now;
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    [880, 660].forEach((freq, i) => {
+      const osc  = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.10, audioCtx.currentTime + i * 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + i * 0.12 + 0.2);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(audioCtx.currentTime + i * 0.12);
+      osc.stop(audioCtx.currentTime  + i * 0.12 + 0.2);
+    });
+  } catch { /* ignored */ }
+}
+
+// ── VIOLATIONS LOGGING ────────────────────────────────────────
+function checkViolations(faces) {
+  if (!document.getElementById('auto-capture-toggle').checked) return;
+  const now  = Date.now();
+  const vios = faces.filter(f => f.label === 'No Mask');
+  if (vios.length && now - lastCaptureTime > captureCooldownMs) {
+    vios.forEach((f, idx) => {
+      violationsList.unshift({
+        time:  new Date().toLocaleTimeString(),
+        person: `Person ${idx + 1}`,
+      });
+      if (violationsList.length > maxViolations) violationsList.pop();
+    });
+    lastCaptureTime = now;
+    renderViolations();
+    beep();
+    // Auto-send email alert if configured
+    sendViolationEmail(vios.length);
+  }
+}
+
+function renderViolations() {
+  const el = document.getElementById('violation-list');
+  if (!violationsList.length) {
+    el.innerHTML = '<div class="empty-state">No policy breaches captured.</div>';
+    return;
+  }
+  el.innerHTML = violationsList.map(v => `
+    <div class="vio-card">
+      🕒 ${v.time} — ${v.person} — No Mask detected
+    </div>
+  `).join('');
+}
+
+function clearViolations() {
+  violationsList.length = 0;
+  renderViolations();
+}
+
+// ── COMPLIANCE CHART ──────────────────────────────────────────
+function pushChartData(maskOn, noMask) {
+  complianceHistory.push({ maskOn, noMask });
+  if (complianceHistory.length > maxHistoryLen) complianceHistory.shift();
+  drawChart();
+}
+
+function drawChart() {
+  const cv = document.getElementById('analytics-chart');
+  if (!cv) return;
+  const rect = cv.getBoundingClientRect();
+  if (!rect.width) return;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width  = rect.width  * dpr;
+  cv.height = rect.height * dpr;
+  const c = cv.getContext('2d');
+  c.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  const pl = 28, pr = 8, pt = 6, pb = 16;
+  const gW = W - pl - pr, gH = H - pt - pb;
+
+  c.clearRect(0, 0, W, H);
+  c.fillStyle = '#fff';
+  c.fillRect(0, 0, W, H);
+
+  c.strokeStyle = '#F1F5F9';
+  c.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pt + gH * i / 4;
+    c.beginPath(); c.moveTo(pl, y); c.lineTo(W - pr, y); c.stroke();
+  }
+
+  if (complianceHistory.length < 2) {
+    c.font = "12px Outfit, system-ui";
+    c.fillStyle = '#94A3B8';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText('Collecting data…', W / 2, H / 2);
+    return;
+  }
+
+  let maxVal = 2;
+  complianceHistory.forEach(d => { maxVal = Math.max(maxVal, d.maskOn, d.noMask); });
+  maxVal = Math.ceil(maxVal);
+
+  c.font = "bold 9px Outfit, system-ui";
+  c.fillStyle = '#94A3B8';
+  c.textAlign = 'right';
+  c.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) {
+    c.fillText(Math.round(maxVal - maxVal * i / 4), pl - 4, pt + gH * i / 4);
+  }
+
+  const plot = (color, key) => {
+    const step  = gW / (maxHistoryLen - 1);
+    const start = maxHistoryLen - complianceHistory.length;
+    c.beginPath();
+    c.strokeStyle = color; c.lineWidth = 2.5;
+    c.lineJoin = 'round'; c.lineCap = 'round';
+    complianceHistory.forEach((d, i) => {
+      const x = pl + (start + i) * step;
+      const y = pt + gH - (gH * d[key] / maxVal);
+      i === 0 ? c.moveTo(x, y) : c.lineTo(x, y);
+    });
+    c.stroke();
+    // Area
+    const lx = pl + (start + complianceHistory.length - 1) * step;
+    c.lineTo(lx, pt + gH);
+    c.lineTo(pl + start * step, pt + gH);
+    c.closePath();
+    c.fillStyle = color + '12';
+    c.fill();
+  };
+
+  plot('#10B981', 'maskOn');
+  plot('#EF4444', 'noMask');
+}
+
+setInterval(() => {
+  let m = 0, n = 0;
+  document.querySelectorAll('.f-badge.green').forEach(() => m++);
+  document.querySelectorAll('.f-badge.red').forEach(() => n++);
+  pushChartData(m, n);
+}, 1000);
+
+// ── DRAG & DROP ──────────────────────────────────────────────
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', ()  => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f?.type.startsWith('image/')) {
+    const r = new FileReader();
+    r.onload = ev => loadImage(ev.target.result);
+    r.readAsDataURL(f);
+    switchTab('image');
+  }
+});
+
+// ── VIDEO UPLOAD & ANALYSIS ──────────────────────────────────
+let selectedVideoFile = null;
+let currentOutputVideo = "";
+
+const vidDropZone = document.getElementById('vid-drop-zone');
+const videoInput = document.getElementById('video-input');
+
+if (vidDropZone) {
+  ['dragenter', 'dragover'].forEach(eventName => {
+    vidDropZone.addEventListener(eventName, e => {
+      e.preventDefault();
+      e.stopPropagation();
+      vidDropZone.classList.add('drag-over');
+    }, false);
+  });
+  
+  ['dragleave', 'drop'].forEach(eventName => {
+    vidDropZone.addEventListener(eventName, e => {
+      e.preventDefault();
+      e.stopPropagation();
+      vidDropZone.classList.remove('drag-over');
+    }, false);
+  });
+  
+  vidDropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const f = files[0];
+      const ext = f.name.substring(f.name.lastIndexOf('.')).toLowerCase();
+      if (['.mp4', '.avi', '.mov'].includes(ext)) {
+        videoInput.files = files;
+        processVideoSelection(f);
+      } else {
+        alert("Unsupported file type. Please upload a .mp4, .avi, or .mov video file.");
+      }
+    }
+  }, false);
+}
+
+function handleVideoSelect(e) {
+  const files = e.target.files;
+  if (files.length > 0) {
+    processVideoSelection(files[0]);
+  }
+}
+
+function processVideoSelection(file) {
+  const maxSize = 100 * 1024 * 1024; // 100MB
+  if (file.size > maxSize) {
+    alert(`Error: Video size exceeds the 100MB limit. Uploaded file: ${(file.size / (1024 * 1024)).toFixed(1)} MB.`);
+    clearVideo();
+    return;
+  }
+  
+  selectedVideoFile = file;
+  document.getElementById('vid-file-name').textContent = file.name;
+  document.getElementById('vid-file-size').textContent = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+  
+  // Switch from drop-zone state to file-ready state
+  document.getElementById('vid-upload-area').style.display  = 'none';
+  document.getElementById('vid-file-ready').style.display   = 'flex';
+  document.getElementById('vid-processing-wrap').style.display = 'none';
+  document.getElementById('vid-results-wrap').style.display = 'none';
+  
+  // Enable/disable the analyse button based on backend status
+  const btn = document.getElementById('analyse-vid-btn');
+  if (btn) {
+    btn.disabled = !backendOnline;
+    btn.style.opacity = backendOnline ? '1' : '0.5';
+    btn.style.cursor  = backendOnline ? 'pointer' : 'not-allowed';
+  }
+}
+
+function clearVideo() {
+  selectedVideoFile = null;
+  currentOutputVideo = "";
+  document.getElementById('video-input').value = "";
+  
+  // Reset back to drop-zone state
+  document.getElementById('vid-upload-area').style.display  = 'flex';
+  document.getElementById('vid-file-ready').style.display   = 'none';
+  document.getElementById('vid-processing-wrap').style.display = 'none';
+  document.getElementById('vid-results-wrap').style.display = 'none';
+  
+  // Clear right-side panels when clearing video
+  facesTableBody.innerHTML = '<div class="empty-row">No active face detections.</div>';
+  faceCountTxt.textContent = "0 faces";
+  document.getElementById('violation-list').innerHTML = '<div class="empty-state">No policy breaches captured.</div>';
+  
+  const player = document.getElementById('res-video-player');
+  player.pause();
+  player.src = "";
+  player.style.display = 'none';
+  document.getElementById('res-video-placeholder').style.display = 'block';
+}
+
+async function startVideoAnalysis() {
+  if (!selectedVideoFile) return;
+  if (!backendOnline) {
+    alert("Backend required for video analysis. Please start the Flask backend server.");
+    return;
+  }
+  
+  // Hide both drop-zone and file-ready states, show processing
+  document.getElementById('vid-upload-area').style.display  = 'none';
+  document.getElementById('vid-file-ready').style.display   = 'none';
+  document.getElementById('vid-processing-wrap').style.display = 'block';
+  document.getElementById('vid-results-wrap').style.display = 'none';
+  
+  // Clear right-side panels at the start of video analysis
+  facesTableBody.innerHTML = '<div class="empty-row">No active face detections.</div>';
+  faceCountTxt.textContent = "0 faces";
+  document.getElementById('violation-list').innerHTML = '<div class="empty-state">No policy breaches captured.</div>';
+  
+  const progressBar = document.getElementById('vid-progress-bar');
+  const progressMsg = document.getElementById('vid-progress-msg');
+  progressBar.style.width = '0%';
+  progressMsg.textContent = "Uploading and initiating video analysis...";
+  
+  const formData = new FormData();
+  formData.append('video', selectedVideoFile);
+  
+  try {
+    const response = await fetch(`${BACKEND_URL}/predict/video`, {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || `Server responded with status ${response.status}`);
+    }
+    
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const update = JSON.parse(line);
+          if (update.error) {
+            throw new Error(update.error);
+          } else if (update.output_video) {
+            // Final report — has output_video filename
+            displayVideoResults(update);
+          } else if (update.progress !== undefined) {
+            // Progress tick
+            const percent = Math.min(99, Math.round((update.progress / Math.max(update.total_frames, 1)) * 100));
+            progressBar.style.width = `${percent}%`;
+            progressMsg.textContent = `Analysing video… frame ${update.progress} / ${update.total_frames}`;
+          }
+        } catch (err) {
+          if (err.message && !err.message.startsWith('Failed to parse')) throw err;
+          console.warn("Failed to parse progress chunk:", err);
+        }
+      }
+    }
+  } catch (err) {
+    alert(`Video analysis failed: ${err.message}`);
+    clearVideo();
+  }
+}
+
+function displayVideoResults(report) {
+  document.getElementById('vid-processing-wrap').style.display = 'none';
+  document.getElementById('vid-results-wrap').style.display = 'block';
+  
+  document.getElementById('res-total-frames').textContent = report.total_frames;
+  document.getElementById('res-processed-frames').textContent = report.processed_frames;
+  document.getElementById('res-total-faces').textContent = report.total_faces;
+  document.getElementById('res-mask-on').textContent = report.mask_on_count;
+  document.getElementById('res-no-mask').textContent = report.no_mask_count;
+  document.getElementById('res-compliance').textContent = report.compliance_rate;
+  
+  const compVal = parseFloat(report.compliance_rate) || 0;
+  document.getElementById('res-compliance-bar').style.width = `${compVal}%`;
+  
+  const timeline = document.getElementById('res-timeline');
+  timeline.innerHTML = "";
+  if (report.violation_timestamps.length === 0) {
+    timeline.innerHTML = '<span style="font-size:12px;color:var(--gray400)">No violations detected</span>';
+  } else {
+    report.violation_timestamps.forEach(ts => {
+      const chip = document.createElement('span');
+      chip.style.cssText = "background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd);padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;user-select:none;transition:all 0.2s";
+      chip.textContent = ts;
+      chip.onclick = () => seekPlayerToTime(ts);
+      chip.onmouseenter = () => { chip.style.background = '#FCA5A5'; chip.style.borderColor = '#EF4444'; };
+      chip.onmouseleave = () => { chip.style.background = 'var(--red-bg)'; chip.style.borderColor = 'var(--red-bd)'; };
+      timeline.appendChild(chip);
+    });
+  }
+  
+  currentOutputVideo = report.output_video;
+  
+  const tbody = document.getElementById('res-table-body');
+  tbody.innerHTML = "";
+  if (report.per_frame_results.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="padding:12px;text-align:center;color:var(--gray400)">No faces detected in any frame.</td></tr>';
+  } else {
+    report.per_frame_results.forEach(res => {
+      res.faces.forEach((face, fIdx) => {
+        const row = document.createElement('tr');
+        row.style.borderBottom = "1px solid var(--gray100)";
+        
+        const label = face.label;
+        const color = label === 'Mask On' ? 'var(--green)' : 'var(--red)';
+        
+        row.innerHTML = `
+          <td style="padding:8px 4px;color:var(--gray500)">${fIdx === 0 ? res.frame : ''}</td>
+          <td style="padding:8px 4px;font-weight:600;color:var(--blue);cursor:pointer;text-decoration:underline" onclick="seekPlayerToTime('${res.time}')">${fIdx === 0 ? res.time : ''}</td>
+          <td style="padding:8px 4px;color:var(--gray600)">Person ${face.person_id || '?'}</td>
+          <td style="padding:8px 4px;font-weight:600;color:${color}">${label}</td>
+          <td style="padding:8px 4px;color:var(--gray700)">${Math.round(face.confidence * 100)}%</td>
+        `;
+        tbody.appendChild(row);
+      });
+    });
+  }
+  
+  // Populate right-side panels
+  populateVideoDetectedIndividuals(report.unique_persons);
+  populateViolationGallery(report.violation_timestamps, report);
+}
+
+function seekPlayerToTime(timeStr) {
+  const player = document.getElementById('res-video-player');
+  previewAnnotatedVideo();
+  
+  const parts = timeStr.split(":");
+  if (parts.length === 2) {
+    const mins = parseInt(parts[0]);
+    const secs = parseInt(parts[1]);
+    const totalSecs = mins * 60 + secs;
+    player.currentTime = totalSecs;
+    player.play();
+  }
+}
+
+function populateVideoDetectedIndividuals(uniquePersons) {
+  if (!uniquePersons || uniquePersons.length === 0) {
+    facesTableBody.innerHTML = '<div class="empty-row">No active face detections.</div>';
+    faceCountTxt.textContent = "0 faces";
+    return;
+  }
+  
+  faceCountTxt.textContent = `${uniquePersons.length} faces`;
+  
+  facesTableBody.innerHTML = uniquePersons.map(p => {
+    const c = p.label === 'Mask On' ? 'green' : 'red';
+    const thumbHtml = p.thumbnail
+      ? `<div class="f-thumb"><img src="data:image/jpeg;base64,${p.thumbnail}" alt="face"></div>`
+      : `<div class="f-thumb">👤</div>`;
+    const labelBadge = p.label === 'Mask On' ? 'Mask On ✅' : 'No Mask ❌';
+    const confPercent = Math.round(p.confidence * 100);
+    return `
+      <div class="face-row">
+        ${thumbHtml}
+        <div class="f-info">
+          <div class="f-name">Person ${p.person_id}</div>
+          <div class="f-bar-wrap"><div class="f-bar ${c}" style="width:${confPercent}%"></div></div>
+          <div class="f-meta"><span>${confPercent}% confidence (seen at ${p.first_seen})</span></div>
+        </div>
+        <span class="f-badge ${c}">${labelBadge}</span>
+      </div>`;
+  }).join('');
+}
+
+async function populateViolationGallery(violationTimestamps, report) {
+  const el = document.getElementById('violation-list');
+  el.innerHTML = "";
+  
+  if (!violationTimestamps || violationTimestamps.length === 0) {
+    el.innerHTML = '<div class="empty-state">No policy breaches captured.</div>';
+    return;
+  }
+  
+  const tempVideo = document.createElement('video');
+  tempVideo.src = URL.createObjectURL(selectedVideoFile);
+  tempVideo.muted = true;
+  tempVideo.playsInline = true;
+
+  await new Promise(resolve => {
+    tempVideo.onloadedmetadata = resolve;
+    tempVideo.onerror = () => resolve();
+  });
+
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = tempVideo.videoWidth || 640;
+  tempCanvas.height = tempVideo.videoHeight || 360;
+  const tempCtx = tempCanvas.getContext('2d');
+
+  for (const timeStr of violationTimestamps) {
+    let personId = "?";
+    if (report.per_frame_results) {
+      const frameRes = report.per_frame_results.find(r => r.time === timeStr);
+      if (frameRes) {
+        const faceVio = frameRes.faces.find(f => f.label === "No Mask");
+        if (faceVio) {
+          personId = faceVio.person_id;
+        }
+      }
+    }
+
+    const parts = timeStr.split(":");
+    let timeInSecs = 0;
+    if (parts.length === 2) {
+      timeInSecs = parseInt(parts[0]) * 60 + parseInt(parts[1]);
+    } else {
+      timeInSecs = parseFloat(timeStr) || 0;
+    }
+
+    tempVideo.currentTime = timeInSecs;
+    
+    await Promise.race([
+      new Promise(resolve => {
+        tempVideo.addEventListener('seeked', function onSeeked() {
+          tempVideo.removeEventListener('seeked', onSeeked);
+          resolve();
+        });
+      }),
+      new Promise(resolve => setTimeout(resolve, 800))
+    ]);
+
+    tempCtx.drawImage(tempVideo, 0, 0, tempCanvas.width, tempCanvas.height);
+    const snapshot = tempCanvas.toDataURL('image/jpeg', 0.8);
+
+    const card = document.createElement('div');
+    card.className = "vio-card";
+    
+    card.innerHTML = `
+      <div style="display:flex;gap:10px;align-items:center;width:100%">
+        <div style="width:70px;height:45px;border-radius:4px;overflow:hidden;background:#000;flex-shrink:0">
+          <img src="${snapshot}" style="width:100%;height:100%;object-fit:cover" alt="violation">
+        </div>
+        <div style="flex:1">
+          <div style="font-weight:700;color:var(--gray900)">Person ${personId}</div>
+          <div style="font-size:11px;color:var(--gray500)">Time: <strong style="color:var(--blue);cursor:pointer;text-decoration:underline" onclick="seekPlayerToTime('${timeStr}')">${timeStr}</strong></div>
+        </div>
+        <span class="f-badge red" style="flex-shrink:0;padding:2px 6px;font-size:10px;font-weight:700">No Mask</span>
+      </div>
+    `;
+    el.appendChild(card);
+  }
+
+  try {
+    URL.revokeObjectURL(tempVideo.src);
+  } catch (e) {}
+}
+
+function previewAnnotatedVideo() {
+  if (!currentOutputVideo) return;
+  const player = document.getElementById('res-video-player');
+  const placeholder = document.getElementById('res-video-placeholder');
+  
+  const videoUrl = `${BACKEND_URL}/video/download/${currentOutputVideo}`;
+  if (player.src !== videoUrl) {
+    player.src = videoUrl;
+    player.load();
+  }
+  player.style.display = 'block';
+  placeholder.style.display = 'none';
+  player.play().catch(err => {
+    console.warn("Video play failed:", err);
+  });
+}
+
+function downloadAnnotatedVideo() {
+  if (!currentOutputVideo) return;
+  const downloadUrl = `${BACKEND_URL}/video/download/${currentOutputVideo}?download=1`;
+  window.open(downloadUrl, '_blank');
+}
+
+function toggleCollapsibleTable() {
+  const wrap = document.getElementById('collapsible-table-wrap');
+  const arrow = document.getElementById('collapsible-arrow');
+  if (wrap.style.display === 'none') {
+    wrap.style.display = 'block';
+    arrow.textContent = '▲';
+  } else {
+    wrap.style.display = 'none';
+    arrow.textContent = '▼';
+  }
+}
+
+// ── DETECTION HISTORY / DATABASE ─────────────────────────────
+let dbPage      = 1;
+const dbPerPage = 15;
+let dbTotalPages = 1;
+let dbTotalRecords = 0;
+
+async function loadDetections() {
+  const source = document.getElementById('db-source-filter').value;
+  const url = `${BACKEND_URL}/detections?page=${dbPage}&per_page=${dbPerPage}${source ? '&source=' + source : ''}`;
+  const tbody = document.getElementById('db-table-body');
+  tbody.innerHTML = '<tr><td colspan="8" class="db-empty">Loading…</td></tr>';
+
+  try {
+    const res  = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    dbTotalPages   = data.pages   || 1;
+    dbTotalRecords = data.total   || 0;
+    dbPage         = data.page    || 1;
+
+    document.getElementById('db-page-info').textContent =
+      `Page ${dbPage} of ${dbTotalPages} · ${dbTotalRecords} record${dbTotalRecords !== 1 ? 's' : ''}`;
+    document.getElementById('db-prev-btn').disabled = dbPage <= 1;
+    document.getElementById('db-next-btn').disabled = dbPage >= dbTotalPages;
+
+    if (!data.records || data.records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="db-empty">No detection records found. Run some analyses to populate the database.</td></tr>';
+      updateDbSummary([]);
+      return;
+    }
+
+    tbody.innerHTML = data.records.map(r => {
+      const ts   = (r.timestamp || '').replace('T', ' ').replace('Z', '').substring(0, 19);
+      const comp = parseFloat(r.compliance) || 0;
+      const barColor = comp >= 80 ? 'var(--green)' : comp >= 50 ? '#F59E0B' : 'var(--red)';
+      const badge = r.source === 'image'
+        ? '<span class="db-badge image">📷 Image</span>'
+        : r.source === 'camera'
+          ? '<span class="db-badge camera">🎥 Camera</span>'
+          : '<span class="db-badge video">🎬 Video</span>';
+      const fileLink = r.filename
+        ? `<a href="${BACKEND_URL}/video/download/${r.filename}" target="_blank" style="color:var(--blue);text-decoration:none;font-size:11px;">${r.filename.substring(0,18)}…</a>`
+        : '<span style="color:var(--gray400);font-size:11px">—</span>';
+      return `
+        <tr>
+          <td style="color:var(--gray400);font-size:11px">${r.id}</td>
+          <td>${badge}</td>
+          <td style="font-size:12px">${ts}</td>
+          <td style="font-weight:600;color:var(--gray900)">${r.total_faces}</td>
+          <td style="font-weight:600;color:var(--green)">${r.mask_on}</td>
+          <td style="font-weight:600;color:var(--red)">${r.no_mask}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-weight:600;color:${barColor}">${comp.toFixed(1)}%</span>
+              <div class="db-comp-bar-wrap"><div class="db-comp-bar" style="width:${comp}%;background:${barColor}"></div></div>
+            </div>
+          </td>
+          <td>${fileLink}</td>
+        </tr>`;
+    }).join('');
+
+    updateDbSummary(data.records);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="8" class="db-empty">⚠️ Could not load records — backend may be offline.<br><small style="color:var(--gray400)">${e.message}</small></td></tr>`;
+    updateDbSummary([]);
+  }
+}
+
+function updateDbSummary(records) {
+  if (!records || records.length === 0) {
+    ['dbstat-total','dbstat-faces','dbstat-maskon','dbstat-nomask','dbstat-comp'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '0';
+    });
+    return;
+  }
+  const total  = dbTotalRecords;
+  const faces  = records.reduce((s, r) => s + (r.total_faces || 0), 0);
+  const maskOn = records.reduce((s, r) => s + (r.mask_on    || 0), 0);
+  const noMask = records.reduce((s, r) => s + (r.no_mask    || 0), 0);
+  const avgC   = records.reduce((s, r) => s + (parseFloat(r.compliance) || 0), 0) / records.length;
+  document.getElementById('dbstat-total').textContent = total;
+  document.getElementById('dbstat-faces').textContent = faces;
+  document.getElementById('dbstat-maskon').textContent = maskOn;
+  document.getElementById('dbstat-nomask').textContent = noMask;
+  document.getElementById('dbstat-comp').textContent  = avgC.toFixed(1) + '%';
+}
+
+function dbChangePage(delta) {
+  const next = dbPage + delta;
+  if (next < 1 || next > dbTotalPages) return;
+  dbPage = next;
+  loadDetections();
+}
+
+function exportCSV() {
+  window.open(`${BACKEND_URL}/detections/export/csv`, '_blank');
+}
+
+function exportPDF() {
+  window.open(`${BACKEND_URL}/detections/export/pdf`, '_blank');
+}
+
+async function clearAllDetections() {
+  if (!confirm('Delete ALL detection records from the database? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`${BACKEND_URL}/detections`, { method: 'DELETE' });
+    if (res.ok) {
+      dbPage = 1;
+      loadDetections();
+    } else {
+      alert('Failed to clear records.');
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// ── BOOT ─────────────────────────────────────────────────────
+(async function boot() {
+  hudMode.innerHTML = 'Engine: <strong>Loading…</strong>';
+  await checkBackend();
+  healthTimer = setInterval(checkBackend, HEALTH_INTERVAL);
+  loadBlazeFace();
+})();
+</script>
+</body>
+</html>

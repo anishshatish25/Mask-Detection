@@ -1,0 +1,11 @@
+Face Mask Detector - Classification Report
+=============================================
+
+              precision    recall  f1-score   support
+
+   with_mask       0.93      1.00      0.96       745
+without_mask       1.00      0.93      0.96       766
+
+    accuracy                           0.96      1511
+   macro avg       0.96      0.96      0.96      1511
+weighted avg       0.96      0.96      0.96      1511
