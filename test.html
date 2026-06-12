@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MaskDetect Test</title>
+  <style>
+    body { margin: 0; padding: 20px; font-family: Arial; background: #f0f0f0; }
+    .viewport { width: 800px; height: 450px; background: #090d16; border-radius: 10px; position: relative; }
+    .placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; }
+    .btn { padding: 10px 20px; background: #3B82F6; color: white; border: none; border-radius: 5px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>MaskDetect Camera Test</h1>
+  <div class="viewport">
+    <div class="placeholder" id="placeholder">
+      <div style="font-size: 48px;">📷</div>
+      <p>Click Start Camera below</p>
+    </div>
+    <video id="video" autoplay muted playsinline style="display:none; width:100%; height:100%; object-fit:cover;"></video>
+    <canvas id="overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></canvas>
+  </div>
+  <br>
+  <button class="btn" onclick="startCamera()">Start Camera</button>
+  <button class="btn" onclick="testBackend()">Test Backend</button>
+  <div id="status" style="margin-top:20px;"></div>
+
+  <script>
+    const BACKEND_URL = 'http://localhost:5000';
+    let videoStream = null;
+
+    async function testBackend() {
+      document.getElementById('status').textContent = 'Testing backend...';
+      try {
+        const res = await fetch(`${BACKEND_URL}/health`);
+        const data = await res.json();
+        document.getElementById('status').textContent = `✅ Backend online: ${JSON.stringify(data)}`;
+      } catch(e) {
+        document.getElementById('status').textContent = `❌ Backend offline: ${e.message}`;
+      }
+    }
+
+    async function startCamera() {
+      try {
+        document.getElementById('status').textContent = 'Starting camera...';
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        videoStream = stream;
+        const video = document.getElementById('video');
+        video.srcObject = stream;
+        video.style.display = 'block';
+        document.getElementById('placeholder').style.display = 'none';
+        document.getElementById('status').textContent = '✅ Camera started';
+      } catch(e) {
+        document.getElementById('status').textContent = `❌ Camera error: ${e.message}`;
+      }
+    }
+
+    testBackend();
+  </script>
+</body>
+</html>

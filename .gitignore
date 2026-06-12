@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints
+*venv/
+env/
+
+# Databases & local state
+backend/detections.db
+detections.db
+
+# Generated Video Outputs & Temporary Files
+backend/outputs/*.mp4
+backend/outputs/out_*
+outputs/*.mp4
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Editor configs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp

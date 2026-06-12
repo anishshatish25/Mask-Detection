@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MaskDetect - Working Version</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: Arial, sans-serif; 
+      background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+      min-height: 100vh;
+    }
+    header {
+      background: white;
+      padding: 15px 30px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand { font-size: 24px; font-weight: bold; }
+    .status { display: flex; gap: 10px; }
+    .pill {
+      padding: 5px 15px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .pill.online { background: #ECFDF5; color: #10B981; }
+    .pill.offline { background: #FEF2F2; color: #EF4444; }
+    .tabs {
+      background: white;
+      padding: 0 30px;
+      display: flex;
+      gap: 5px;
+      border-bottom: 2px solid #e2e8f0;
+    }
+    .tab-btn {
+      padding: 15px 25px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 14px;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+    }
+    .tab-btn.active { border-bottom-color: #3B82F6; color: #3B82F6; font-weight: 600; }
+    main { max-width: 1400px; margin: 30px auto; padding: 0 30px; }
+    .content { background: white; border-radius: 15px; padding: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+    .viewport {
+      width: 100%;
+      height: 500px;
+      background: #090d16;
+      border-radius: 10px;
+      position: relative;
+      overflow: hidden;
+    }
+    .placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #64748B;
+      gap: 15px;
+    }
+    .placeholder-icon { font-size: 64px; }
+    video, canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    canvas { pointer-events: none; z-index: 2; }
+    .controls {
+      margin-top: 20px;
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary { background: #3B82F6; color: white; }
+    .btn-primary:hover { background: #2563EB; }
+    .btn-outline { background: white; color: #64748B; border: 1px solid #E2E8F0; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .drop-zone {
+      border: 2px dashed #cbd5e1;
+      border-radius: 10px;
+      padding: 60px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .drop-zone:hover { border-color: #3B82F6; background: #eff6ff; }
+    #result { margin-top: 20px; text-align: center; font-size: 16px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  
+  <header>
+    <div class="brand">😷 MaskDetect</div>
+    <div class="status">
+      <div class="pill" id="conn-pill">Checking...</div>
+      <div class="pill" id="model-pill">Initializing...</div>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('camera')">📷 Live Camera</button>
+    <button class="tab-btn" onclick="switchTab('image')">🖼️ Analyze Image</button>
+    <button class="tab-btn" onclick="switchTab('video')">🎬 Analyze Video</button>
+  </div>
+
+  <main>
+    <!-- Camera Tab -->
+    <div id="tab-camera" class="tab-content active">
+      <div class="content">
+        <h2>Live Camera Detection</h2>
+        <div class="viewport">
+          <div class="placeholder" id="camera-placeholder">
+            <div class="placeholder-icon">📷</div>
+            <p>Click "Start Camera" to begin detection</p>
+          </div>
+          <video id="video" autoplay muted playsinline style="display:none;"></video>
+          <canvas id="overlay"></canvas>
+        </div>
+        <div class="controls">
+          <button class="btn btn-primary" id="start-btn" onclick="toggleCamera()">▶ Start Camera</button>
+          <button class="btn btn-outline" onclick="captureFrame()">📸 Capture</button>
+        </div>
+        <div id="result"></div>
+      </div>
+    </div>
+
+    <!-- Image Tab -->
+    <div id="tab-image" class="tab-content">
+      <div class="content">
+        <h2>Image Analysis</h2>
+        <div class="drop-zone" onclick="document.getElementById('file-input').click()">
+          <input type="file" id="file-input" accept="image/*" style="display:none;" onchange="analyzeImage(event)">
+          <div style="font-size: 48px; margin-bottom: 15px;">📂</div>
+          <div style="font-size: 18px; font-weight: 600;">Drop image here or click to upload</div>
+        </div>
+        <canvas id="image-canvas" style="display:none; max-width:100%; margin-top:20px;"></canvas>
+        <div id="image-result"></div>
+      </div>
+    </div>
+
+    <!-- Video Tab -->
+    <div id="tab-video" class="tab-content">
+      <div class="content">
+        <h2>Video Analysis</h2>
+        <div class="drop-zone" onclick="document.getElementById('video-input').click()">
+          <input type="file" id="video-input" accept=".mp4,.avi,.mov" style="display:none;" onchange="analyzeVideo(event)">
+          <div style="font-size: 48px; margin-bottom: 15px;">🎬</div>
+          <div style="font-size: 18px; font-weight: 600;">Drop video here or click to upload</div>
+          <div style="color: #64748B; margin-top: 10px;">Supports .mp4, .avi, .mov - Max 100MB</div>
+        </div>
+        <div id="video-result"></div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const BACKEND_URL = 'http://localhost:5000';
+    let videoStream = null;
+    let cameraRunning = false;
+    let backendOnline = false;
+
+    // Check backend
+    async function checkBackend() {
+      try {
+        const res = await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(5000) });
+        const data = await res.json();
+        backendOnline = res.ok;
+        document.getElementById('conn-pill').className = 'pill online';
+        document.getElementById('conn-pill').textContent = 'Backend Online';
+        document.getElementById('model-pill').className = 'pill online';
+        document.getElementById('model-pill').textContent = data.demo_mode ? 'Demo Mode' : 'Model Loaded';
+      } catch(e) {
+        backendOnline = false;
+        document.getElementById('conn-pill').className = 'pill offline';
+        document.getElementById('conn-pill').textContent = 'Backend Offline';
+      }
+    }
+
+    // Tab switching
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+      document.getElementById(`tab-${tab}`).classList.add('active');
+      event.target.classList.add('active');
+      if (tab !== 'camera' && cameraRunning) stopCamera();
+    }
+
+    // Camera functions
+    async function toggleCamera() {
+      if (cameraRunning) {
+        stopCamera();
+      } else {
+        await startCamera();
+      }
+    }
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        videoStream = stream;
+        const video = document.getElementById('video');
+        video.srcObject = stream;
+        video.style.display = 'block';
+        document.getElementById('camera-placeholder').style.display = 'none';
+        
+        const canvas = document.getElementById('overlay');
+        canvas.width = 640;
+        canvas.height = 480;
+        
+        cameraRunning = true;
+        document.getElementById('start-btn').textContent = '⏹ Stop Camera';
+        document.getElementById('start-btn').className = 'btn btn-outline';
+        
+        startDetectionLoop();
+      } catch(e) {
+        alert('Camera access denied: ' + e.message);
+      }
+    }
+
+    function stopCamera() {
+      if (videoStream) {
+        videoStream.getTracks().forEach(t => t.stop());
+      }
+      document.getElementById('video').style.display = 'none';
+      document.getElementById('camera-placeholder').style.display = 'flex';
+      cameraRunning = false;
+      document.getElementById('start-btn').textContent = '▶ Start Camera';
+      document.getElementById('start-btn').className = 'btn btn-primary';
+    }
+
+    async function startDetectionLoop() {
+      if (!cameraRunning) return;
+      
+      const video = document.getElementById('video');
+      const canvas = document.createElement('canvas');
+      canvas.width = 320;
+      canvas.height = 240;
+      canvas.getContext('2d').drawImage(video, 0, 0, 320, 240);
+      const base64 = canvas.toDataURL('image/jpeg', 0.7);
+
+      if (backendOnline) {
+        try {
+          const res = await fetch(`${BACKEND_URL}/predict`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: base64 }),
+            signal: AbortSignal.timeout(3000)
+          });
+          const data = await res.json();
+          
+          const ctx = document.getElementById('overlay').getContext('2d');
+          ctx.clearRect(0, 0, 640, 480);
+          
+          if (data.faces && data.faces.length > 0) {
+            data.faces.forEach(face => {
+              const [x, y, w, h] = face.box.map(v => v * 2);
+              const color = face.label === 'Mask On' ? '#10B981' : '#EF4444';
+              ctx.strokeStyle = color;
+              ctx.lineWidth = 3;
+              ctx.strokeRect(x, y, w, h);
+              ctx.fillStyle = color;
+              ctx.font = 'bold 16px Arial';
+              ctx.fillText(`${face.label} ${face.confidence}%`, x, y - 5);
+            });
+            document.getElementById('result').textContent = `Detected ${data.faces.length} face(s)`;
+          } else {
+            document.getElementById('result').textContent = 'No faces detected';
+          }
+        } catch(e) {
+          console.error('Detection failed:', e);
+        }
+      }
+      
+      setTimeout(startDetectionLoop, 500);
+    }
+
+    function captureFrame() {
+      if (!cameraRunning) return;
+      const canvas = document.createElement('canvas');
+      const video = document.getElementById('video');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      const overlay = document.getElementById('overlay');
+      canvas.getContext('2d').drawImage(overlay, 0, 0);
+      const a = document.createElement('a');
+      a.download = `capture_${Date.now()}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    }
+
+    async function analyzeImage(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const canvas = document.getElementById('image-canvas');
+        const ctx = canvas.getContext('2d');
+        const img = new Image();
+        img.onload = async () => {
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          canvas.style.display = 'block';
+          
+          if (backendOnline) {
+            try {
+              const res = await fetch(`${BACKEND_URL}/predict/image`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: e.target.result })
+              });
+              const data = await res.json();
+              
+              if (data.faces) {
+                data.faces.forEach(face => {
+                  const [x, y, w, h] = face.box;
+                  const color = face.label === 'Mask On' ? '#10B981' : '#EF4444';
+                  ctx.strokeStyle = color;
+                  ctx.lineWidth = 3;
+                  ctx.strokeRect(x, y, w, h);
+                  ctx.fillStyle = color;
+                  ctx.font = 'bold 16px Arial';
+                  ctx.fillText(`${face.label} ${face.confidence}%`, x, y - 5);
+                });
+                document.getElementById('image-result').textContent = `✅ Detected ${data.faces.length} face(s)`;
+              }
+            } catch(e) {
+              document.getElementById('image-result').textContent = '❌ Analysis failed: ' + e.message;
+            }
+          } else {
+            document.getElementById('image-result').textContent = '⚠️ Backend offline - start Flask server';
+          }
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function analyzeVideo(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      
+      if (file.size > 100 * 1024 * 1024) {
+        alert('Video too large. Max 100MB');
+        return;
+      }
+      
+      if (!backendOnline) {
+        alert('Backend required for video analysis');
+        return;
+      }
+      
+      document.getElementById('video-result').innerHTML = '<div style="text-align:center; padding:40px;">⏳ Uploading and analyzing video...</div>';
+      
+      const formData = new FormData();
+      formData.append('video', file);
+      
+      try {
+        const res = await fetch(`${BACKEND_URL}/predict/video`, {
+          method: 'POST',
+          body: formData
+        });
+        
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        
+        while (true) {
+          const {value, done} = await reader.read();
+          if (done) break;
+          
+          buffer += decoder.decode(value, {stream: true});
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const data = JSON.parse(line);
+            if (data.output_video) {
+              document.getElementById('video-result').innerHTML = `
+                <div style="text-align:center; padding:30px; background:#ECFDF5; border-radius:10px; margin-top:20px;">
+                  <div style="font-size:48px; margin-bottom:20px;">✅</div>
+                  <h3>Analysis Complete</h3>
+                  <p>Total Faces: ${data.total_faces} | Mask On: ${data.mask_on_count} | No Mask: ${data.no_mask_count}</p>
+                  <p>Compliance: ${data.compliance_rate}</p>
+                  <button class="btn btn-primary" onclick="window.open('${BACKEND_URL}/video/download/${data.output_video}?download=1')">⬇ Download Annotated Video</button>
+                </div>
+              `;
+            }
+          }
+        }
+      } catch(e) {
+        document.getElementById('video-result').textContent = '❌ Video analysis failed: ' + e.message;
+      }
+    }
+
+    // Initialize
+    checkBackend();
+    setInterval(checkBackend, 10000);
+  </script>
+</body>
+</html>

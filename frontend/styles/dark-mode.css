@@ -1,0 +1,331 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   MASKDETECT - DARK MODE STYLES
+   Comprehensive dark theme overrides
+   ═════════════════════════════════════════════════════════════════════════════ */
+
+body.dark-mode {
+  --bg-page: linear-gradient(135deg, #1a1f2e 0%, #242d3d 100%);
+  --bg-primary: #1e2839;
+  --bg-secondary: #242d3d;
+  --bg-tertiary: #2d3748;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-tertiary: #94a3b8;
+  --border: #3d4758;
+  --border-dark: #475569;
+  --glass-bg: rgba(30, 40, 57, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.1);
+}
+
+/* ── HEADER ──────────────────────────────────────────────────────────────── */
+body.dark-mode header {
+  background: rgba(30, 40, 57, 0.8);
+  border-bottom-color: var(--border);
+}
+
+/* ── CARDS ──────────────────────────────────────────────────────────────── */
+body.dark-mode .card {
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+}
+
+body.dark-mode .card-header {
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+body.dark-mode .card-footer {
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+
+/* ── STAT CARD ──────────────────────────────────────────────────────────– */
+body.dark-mode .stat-card {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+}
+
+body.dark-mode .stat-card:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--primary);
+}
+
+/* ── BUTTONS ────────────────────────────────────────────────────────────── */
+body.dark-mode .btn-outline {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+body.dark-mode .btn-outline:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: var(--border-dark);
+}
+
+body.dark-mode .btn-ghost {
+  color: var(--primary);
+}
+
+body.dark-mode .btn-ghost:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.15);
+}
+
+/* ── FORM ELEMENTS ──────────────────────────────────────────────────────– */
+body.dark-mode input,
+body.dark-mode textarea,
+body.dark-mode select {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+body.dark-mode input::placeholder,
+body.dark-mode textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+body.dark-mode input:focus,
+body.dark-mode textarea:focus,
+body.dark-mode select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+/* ── PROGRESS ──────────────────────────────────────────────────────────– */
+body.dark-mode .progress {
+  background: var(--bg-tertiary);
+}
+
+/* ── TABLE ────────────────────────────────────────────────────────────– */
+body.dark-mode .table thead {
+  background: var(--gray-900);
+}
+
+body.dark-mode .table tbody tr {
+  border-bottom-color: var(--border);
+}
+
+body.dark-mode .table tbody tr:hover {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+body.dark-mode .table td {
+  color: var(--text-secondary);
+}
+
+/* ── TABS ──────────────────────────────────────────────────────────────– */
+body.dark-mode .tabs-nav {
+  border-bottom-color: var(--border);
+}
+
+body.dark-mode .tab-btn {
+  color: var(--text-secondary);
+}
+
+body.dark-mode .tab-btn:hover {
+  color: var(--text-primary);
+}
+
+body.dark-mode .tab-btn.active {
+  color: var(--primary);
+}
+
+/* ── MODAL ────────────────────────────────────────────────────────────– */
+body.dark-mode .modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+
+body.dark-mode .modal-header {
+  border-bottom-color: var(--border);
+}
+
+body.dark-mode .modal-footer {
+  border-top-color: var(--border);
+}
+
+body.dark-mode .modal-close {
+  color: var(--text-secondary);
+}
+
+body.dark-mode .modal-close:hover {
+  color: var(--text-primary);
+}
+
+/* ── SCROLLBAR (DARK MODE) ──────────────────────────────────────────– */
+body.dark-mode::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+body.dark-mode::-webkit-scrollbar-thumb {
+  background: var(--gray-600);
+}
+
+body.dark-mode::-webkit-scrollbar-thumb:hover {
+  background: var(--gray-500);
+}
+
+/* ── DROP ZONE ──────────────────────────────────────────────────────────– */
+body.dark-mode .drop-zone {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+body.dark-mode .drop-zone:hover,
+body.dark-mode .drop-zone.drag-over {
+  border-color: var(--primary);
+  background: rgba(59, 130, 246, 0.15);
+}
+
+body.dark-mode .dz-title {
+  color: var(--text-primary);
+}
+
+body.dark-mode .dz-subtitle {
+  color: var(--text-tertiary);
+}
+
+/* ── VIEWPORT ──────────────────────────────────────────────────────────– */
+body.dark-mode .viewport {
+  background: #0a0e17;
+  border-color: var(--border);
+}
+
+body.dark-mode .viewport-placeholder {
+  background: #0a0e17;
+  color: var(--text-tertiary);
+}
+
+/* ── HUD OVERLAYS ──────────────────────────────────────────────────────– */
+body.dark-mode .hud {
+  background: rgba(9, 13, 22, 0.85);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+body.dark-mode .hud-pill {
+  background: rgba(9, 13, 22, 0.85);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* ── EMPTY STATE ────────────────────────────────────────────────────────– */
+body.dark-mode .card-empty {
+  color: var(--text-tertiary);
+}
+
+/* ── PILLS ────────────────────────────────────────────────────────────– */
+body.dark-mode .pill.checking {
+  color: var(--text-tertiary);
+  border-color: var(--border);
+  background: var(--bg-tertiary);
+}
+
+body.dark-mode .pill.offline {
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+body.dark-mode .pill.online {
+  color: var(--success);
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+/* ── ALERTS ────────────────────────────────────────────────────────────– */
+body.dark-mode .alert {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+body.dark-mode .alert-success {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+body.dark-mode .alert-danger {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+body.dark-mode .alert-warning {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+body.dark-mode .alert-info {
+  background: rgba(14, 165, 233, 0.1);
+  border-color: rgba(14, 165, 233, 0.3);
+}
+
+/* ── BADGE ────────────────────────────────────────────────────────────– */
+body.dark-mode .badge.success {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: var(--success-light);
+}
+
+body.dark-mode .badge.danger {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: var(--danger-light);
+}
+
+body.dark-mode .badge.warning {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #fbbf24;
+}
+
+body.dark-mode .badge.neutral {
+  color: var(--text-secondary);
+  border-color: var(--border);
+  background: var(--bg-tertiary);
+}
+
+/* ── SWITCH ────────────────────────────────────────────────────────────– */
+body.dark-mode .switch-input {
+  background-color: var(--gray-600);
+}
+
+body.dark-mode .switch-input:focus {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+}
+
+/* ── PAGE TITLE & LINKS ────────────────────────────────────────────────– */
+body.dark-mode .page-title h1 {
+  color: var(--text-primary);
+}
+
+body.dark-mode .page-subtitle {
+  color: var(--text-secondary);
+}
+
+body.dark-mode a {
+  color: var(--primary-light);
+}
+
+body.dark-mode a:hover {
+  color: var(--primary);
+}
+
+/* ── TEXT SELECTION ────────────────────────────────────────────────────– */
+body.dark-mode ::selection {
+  background: rgba(59, 130, 246, 0.3);
+  color: var(--text-primary);
+}
+
+/* ── SPINNER ──────────────────────────────────────────────────────────– */
+body.dark-mode .spinner {
+  border-color: var(--bg-tertiary);
+  border-top-color: var(--primary);
+}
+
+/* ── HOVER EFFECTS ────────────────────────────────────────────────────– */
+body.dark-mode .table tbody tr:hover {
+  background-color: rgba(59, 130, 246, 0.15);
+}
+
+body.dark-mode .card:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+body.dark-mode .stat-card:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}

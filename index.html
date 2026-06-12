@@ -264,6 +264,7 @@
       overflow: hidden;
       aspect-ratio: 16/9;
       box-shadow: var(--shadow-lg);
+      min-height: 400px;
     }
     #overlay, #img-canvas {
       width: 100%;
@@ -381,7 +382,7 @@
       z-index: 5;
       color: var(--gray500);
     }
-    .cam-placeholder.hidden { display: none; }
+    .cam-placeholder.hidden { display: none !important; }
     .cam-icon { font-size: 44px; }
     .cam-placeholder p { font-size: 13px; text-align: center; max-width: 220px; }
 
@@ -785,8 +786,8 @@
       </div>
 
       <!-- Live Camera Viewport Contents -->
-      <div id="tab-camera-viewport" class="tab-content" style="height:100%">
-        <div class="cam-placeholder" id="cam-placeholder">
+      <div id="tab-camera-viewport" class="tab-content" style="height:100%;position:relative">
+        <div class="cam-placeholder" id="cam-placeholder" style="display:flex">
           <span class="cam-icon">📷</span>
           <p>Click <strong>Start Camera</strong> in the HUD to begin real-time surveillance.</p>
         </div>
@@ -1203,30 +1204,51 @@ function switchTab(tab) {
     stopCamera();
   }
   const isDB = tab === 'database';
-  document.getElementById('tab-camera-viewport').style.display = tab === 'camera'   ? 'block' : 'none';
-  document.getElementById('tab-image-viewport').style.display  = tab === 'image'    ? 'block' : 'none';
-  document.getElementById('tab-video-viewport').style.display  = tab === 'video'    ? 'block' : 'none';
-  document.getElementById('tab-db-viewport').style.display     = isDB               ? 'block' : 'none';
+  
+  // Show/hide tab viewports
+  const camView = document.getElementById('tab-camera-viewport');
+  const imgView = document.getElementById('tab-image-viewport');
+  const vidView = document.getElementById('tab-video-viewport');
+  const dbView  = document.getElementById('tab-db-viewport');
+  
+  if (camView) camView.style.display = tab === 'camera' ? 'block' : 'none';
+  if (imgView) imgView.style.display = tab === 'image'  ? 'block' : 'none';
+  if (vidView) vidView.style.display = tab === 'video'  ? 'block' : 'none';
+  if (dbView)  dbView.style.display  = isDB ? 'block' : 'none';
 
-  // Hide the camera live-view grid when on DB tab
+  // Show/hide the main grid when on DB tab
   const upperRow = document.querySelector('.upper-row');
   const lowerRow = document.querySelector('.lower-row');
-  if (upperRow) upperRow.style.display = isDB ? 'none' : '';
-  if (lowerRow) lowerRow.style.display = isDB ? 'none' : '';
+  if (upperRow) upperRow.style.display = isDB ? 'none' : 'grid';
+  if (lowerRow) lowerRow.style.display = isDB ? 'none' : 'grid';
   
-  hudCamActions.style.display = tab === 'camera' ? 'flex' : 'none';
-  hudImgActions.style.display = tab === 'image'  ? 'flex' : 'none';
-  document.getElementById('hud-vid-actions').style.display = tab === 'video' ? 'flex' : 'none';
+  // Show/hide HUD controls based on tab
+  if (hudCamActions) hudCamActions.style.display = tab === 'camera' ? 'flex' : 'none';
+  if (hudImgActions) hudImgActions.style.display = tab === 'image'  ? 'flex' : 'none';
+  const vidActions = document.getElementById('hud-vid-actions');
+  if (vidActions) vidActions.style.display = tab === 'video' ? 'flex' : 'none';
   
-  document.getElementById('tab-cam-btn').className = 'tab-btn' + (tab === 'camera'   ? ' active' : '');
-  document.getElementById('tab-img-btn').className = 'tab-btn' + (tab === 'image'    ? ' active' : '');
-  document.getElementById('tab-vid-btn').className = 'tab-btn' + (tab === 'video'    ? ' active' : '');
-  document.getElementById('tab-db-btn').className  = 'tab-btn' + (isDB              ? ' active' : '');
+  // Update active tab button styling
+  const camBtn = document.getElementById('tab-cam-btn');
+  const imgBtn = document.getElementById('tab-img-btn');
+  const vidBtn = document.getElementById('tab-vid-btn');
+  const dbBtn  = document.getElementById('tab-db-btn');
   
-  document.getElementById('camera-container').style.display = (tab === 'camera' && cameraRunning) ? 'block' : 'none';
-  hudFps.style.display = (tab === 'camera') ? '' : 'none';
+  if (camBtn) camBtn.className = 'tab-btn' + (tab === 'camera' ? ' active' : '');
+  if (imgBtn) imgBtn.className = 'tab-btn' + (tab === 'image'  ? ' active' : '');
+  if (vidBtn) vidBtn.className = 'tab-btn' + (tab === 'video'  ? ' active' : '');
+  if (dbBtn)  dbBtn.className  = 'tab-btn' + (isDB ? ' active' : '');
+  
+  // Show camera container when on camera tab and running
+  const camContainer = document.getElementById('camera-container');
+  if (camContainer) camContainer.style.display = (tab === 'camera' && cameraRunning) ? 'block' : 'none';
+  
+  // Show FPS counter only on camera tab
+  if (hudFps) hudFps.style.display = (tab === 'camera') ? '' : 'none';
 
   if (isDB) loadDetections();
+  
+  console.log(`[switchTab] Switched to: ${tab}`);
 }
 
 // ── BACKEND HEALTH CHECK ──────────────────────────────────────

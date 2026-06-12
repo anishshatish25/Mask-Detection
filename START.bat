@@ -39,7 +39,7 @@ start "MaskGuard Backend" cmd /k "cd /d "%~dp0backend" && python app.py"
 :: ── Start Frontend HTTP server on port 8000 ───────────────
 echo.
 echo  Starting frontend server on http://localhost:8000 ...
-start "MaskGuard Frontend" cmd /k "cd /d "%~dp0" && python -m http.server 8000"
+start "MaskGuard Frontend" cmd /k "cd /d "%~dp0frontend" && python -m http.server 8000"
 
 :: ── Wait for servers to start ─────────────────────────────
 echo  Waiting for servers to start...

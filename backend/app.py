@@ -351,77 +351,89 @@ def run_classify_on_boxes(frame, boxes):
 class PersonTracker:
     """
     Tracks faces across video frames.
-    Matching priority: IoU overlap first (tight), then normalised distance.
-    A new track is only created when no existing track is a plausible match.
+    - Once a person gets an ID they KEEP it for the whole video.
+    - Matching uses IoU first, then normalised centre-distance.
+    - Stale tracks become MORE permissive (larger effective dist_thr) so a
+      person who temporarily left frame is re-matched rather than re-numbered.
     """
-    def __init__(self, iou_thr=0.30, dist_thr=2.5, max_stale=300):
+    def __init__(self, iou_thr=0.25, dist_thr=1.6, max_stale=600):
         self.persons    = {}
         self.next_id    = 1
-        self.iou_thr    = iou_thr    # IoU threshold for "same person" overlap
-        self.dist_thr   = dist_thr   # normalised distance threshold
+        self.iou_thr    = iou_thr
+        self.dist_thr   = dist_thr   # base normalised-distance threshold
         self.max_stale  = max_stale
         self._fidx      = 0
 
+    # ── geometry helpers ────────────────────────────────────────
     def _iou(self, a, b):
         x1 = max(a[0], b[0]); y1 = max(a[1], b[1])
         x2 = min(a[0]+a[2], b[0]+b[2]); y2 = min(a[1]+a[3], b[1]+b[3])
-        if x2<=x1 or y2<=y1: return 0.0
+        if x2 <= x1 or y2 <= y1: return 0.0
         inter = (x2-x1)*(y2-y1)
         union = a[2]*a[3] + b[2]*b[3] - inter
-        return inter/union if union > 0 else 0.0
+        return inter / union if union > 0 else 0.0
 
     def _norm_dist(self, a, b):
         cx1 = a[0]+a[2]/2.0; cy1 = a[1]+a[3]/2.0
         cx2 = b[0]+b[2]/2.0; cy2 = b[1]+b[3]/2.0
-        dist = ((cx1-cx2)**2 + (cy1-cy2)**2)**0.5
+        dist  = ((cx1-cx2)**2 + (cy1-cy2)**2)**0.5
         avg_d = ((a[2]**2+a[3]**2)**0.5 + (b[2]**2+b[3]**2)**0.5) / 2.0
-        return dist/avg_d if avg_d > 0 else float("inf")
+        return dist / avg_d if avg_d > 0 else float("inf")
 
     def _score(self, stored_box, new_box, stale):
         iou = self._iou(stored_box, new_box)
-        # Strong IoU match → definitely the same person
         if iou >= self.iou_thr:
-            return 2.0 + iou
+            return 2.0 + iou   # definite match via overlap
 
         nd = self._norm_dist(stored_box, new_box)
-        # Distance too far → never match (keeps distinct people separate)
+
+        # Fixed distance threshold.
+        # dist_thr=1.6 means:
+        #   same person moving ~0.4 diagonals between frames → always matches (0.4 < 1.6)
+        #   two distinct people 2.1 diagonals apart         → never merges  (2.1 > 1.6)
         if nd >= self.dist_thr:
-            return -1.0
+            return -1.0   # definitively a different person
 
         prox = 1.0 - nd / self.dist_thr
-        # Staleness penalty: after max_stale frames without a match, trust drops
-        stale_pen = min(1.0, stale / max(self.max_stale, 1))
-        return prox * (1.0 - 0.4 * stale_pen)
+        return prox   # 0 < score < 1
 
+    # ── public API ──────────────────────────────────────────────
     def update(self, box, label, confidence, timestamp, thumbnail):
         self._fidx += 1
         best_pid, best_score = None, -1.0
+
         for pid, p in self.persons.items():
             stale = self._fidx - p["last_frame"]
             s     = self._score(p["box"], box, stale)
             if s > best_score:
                 best_score, best_pid = s, pid
 
-        # Accept match only if score is positive (distance was within threshold)
         if best_pid is not None and best_score > 0.0:
             p = self.persons[best_pid]
-            # EMA position update (α=0.7): follow movement smoothly
+            # EMA position update — α higher for fresh detections, lower when stale
+            stale = self._fidx - p["last_frame"]
+            alpha = 0.80 if stale <= 2 else 0.60
             ox, oy, ow, oh = p["box"]
             nx, ny, nw, nh = box
-            alpha = 0.70
-            p["box"]        = (int(alpha*nx+(1-alpha)*ox), int(alpha*ny+(1-alpha)*oy),
-                               int(alpha*nw+(1-alpha)*ow), int(alpha*nh+(1-alpha)*oh))
+            p["box"]        = (int(alpha*nx+(1-alpha)*ox),
+                               int(alpha*ny+(1-alpha)*oy),
+                               int(alpha*nw+(1-alpha)*ow),
+                               int(alpha*nh+(1-alpha)*oh))
             p["label"]      = label
             p["confidence"] = confidence
             p["last_frame"] = self._fidx
             return best_pid
 
-        # Genuinely new person
+        # Genuinely new person — assign next sequential ID
         pid = self.next_id
         self.persons[pid] = {
-            "person_id":  pid, "box": box, "label": label,
-            "confidence": confidence, "first_seen": timestamp,
-            "thumbnail":  thumbnail, "last_frame": self._fidx,
+            "person_id":  pid,
+            "box":        box,
+            "label":      label,
+            "confidence": confidence,
+            "first_seen": timestamp,
+            "thumbnail":  thumbnail,
+            "last_frame": self._fidx,
         }
         self.next_id += 1
         return pid
@@ -430,7 +442,9 @@ class PersonTracker:
         return list(self.persons.values())
 
     def reset(self):
-        self.persons = {}; self.next_id = 1; self._fidx = 0
+        self.persons = {}
+        self.next_id = 1
+        self._fidx   = 0
 
 # =============================================================================
 # ROUTES
@@ -636,10 +650,9 @@ def predict_video():
         log.info(f"Video {vid_w}x{vid_h}  {'portrait' if portrait else 'landscape'}  "
                  f"{n_frames}fr @ {fps:.1f}fps  out={out_w}x{out_h}  skip={SKIP_N}")
 
-        # Tracker: dist_thr=2.5 normalised units.
-        # Two people >2.5 face-diagonals apart are always separate tracks.
-        # Same person moving within 2.5 diagonals per SKIP_N frames keeps same ID.
-        tracker = PersonTracker(iou_thr=0.30, dist_thr=2.5, max_stale=300)
+        # dist_thr=1.6: keeps two people 2.1 diagonals apart as separate tracks,
+        # while the same person moving ~0.4 diagonals always re-matches.
+        tracker = PersonTracker(iou_thr=0.25, dist_thr=1.6, max_stale=600)
 
         sx = out_w / max(vid_w, 1)
         sy = out_h / max(vid_h, 1)
@@ -997,6 +1010,37 @@ def send_alert_email():
         return jsonify({"error": f"SMTP error: {e}"}), 500
     except Exception as e:
         return jsonify({"error": f"Email failed: {e}"}), 500
+
+# =============================================================================
+# FRONTEND ROUTES - Serve index.html and static files
+# =============================================================================
+FRONTEND_DIR = BASE_DIR.parent / "frontend"
+
+@app.route("/", methods=["GET"])
+def serve_index():
+    """Serve the main index.html page"""
+    index_path = FRONTEND_DIR / "index.html"
+    if index_path.exists():
+        return send_from_directory(str(FRONTEND_DIR), "index.html")
+    return jsonify({"error": "Frontend not found"}), 404
+
+@app.route("/styles/<path:filename>", methods=["GET"])
+def serve_styles(filename):
+    """Serve CSS files"""
+    return send_from_directory(str(FRONTEND_DIR / "styles"), filename)
+
+@app.route("/js/<path:filename>", methods=["GET"])
+def serve_js(filename):
+    """Serve JavaScript files"""
+    return send_from_directory(str(FRONTEND_DIR / "js"), filename)
+
+@app.route("/<path:filename>", methods=["GET"])
+def serve_static(filename):
+    """Serve any static files from frontend"""
+    file_path = FRONTEND_DIR / filename
+    if file_path.exists() and file_path.is_file():
+        return send_from_directory(str(FRONTEND_DIR), filename)
+    return jsonify({"error": "File not found"}), 404
 
 # =============================================================================
 # ERROR HANDLERS
