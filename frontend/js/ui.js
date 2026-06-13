@@ -170,24 +170,35 @@ class TabManager {
       return;
     }
 
-    // Hide current tab
+    if (this.currentTab === tabName) return;
+
+    // ── Hide current tab ──────────────────────────────────────
     if (this.currentTab) {
       const current = this.tabs.get(this.currentTab);
-      if (current.button) DOM.removeClass(current.button, 'active');
+      if (current.button) {
+        current.button.classList.remove('active');
+      }
       if (current.content) {
-        current.content.style.display = 'none';
+        // Support both class patterns: .tab-panel/.active and .tab-content/.tab-active
+        current.content.classList.remove('active');
         current.content.classList.remove('tab-active');
+        current.content.style.display = 'none';
       }
       if (current.onHide) current.onHide();
     }
 
-    // Show new tab — remove inline display:none, then set correct display mode
+    // ── Show new tab ──────────────────────────────────────────
     const tab = this.tabs.get(tabName);
-    if (tab.button) DOM.addClass(tab.button, 'active');
+    if (tab.button) {
+      tab.button.classList.add('active');
+    }
     if (tab.content) {
-      tab.content.style.removeProperty('display');   // clear inline first
+      tab.content.style.removeProperty('display');
+      // Support both class patterns
+      tab.content.classList.add('active');
       tab.content.classList.add('tab-active');
-      tab.content.style.display = (tabName === 'dashboard') ? 'flex' : 'block';
+      // .tab-panel uses display:block via CSS (animation), but dashboard may need block
+      // Do not force display here — let CSS handle it via the .active class
     }
     if (tab.onShow) tab.onShow();
 

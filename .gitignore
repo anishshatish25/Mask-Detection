@@ -13,6 +13,7 @@ detections.db
 
 # Generated Video Outputs & Temporary Files
 backend/outputs/*.mp4
+backend/outputs/*.jpg
 backend/outputs/out_*
 outputs/*.mp4
 

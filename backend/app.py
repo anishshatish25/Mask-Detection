@@ -67,6 +67,18 @@ def init_db():
                 filename    TEXT    DEFAULT ''
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS violations (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp    TEXT    NOT NULL,
+                source       TEXT    NOT NULL,
+                image_file   TEXT    NOT NULL,
+                label        TEXT    NOT NULL,
+                confidence   REAL    NOT NULL,
+                ai_status    TEXT    DEFAULT 'Pending',
+                ai_reasoning TEXT    DEFAULT ''
+            )
+        """)
         conn.commit()
     log.info(f"Database initialised at {DB_PATH}")
 
@@ -81,6 +93,21 @@ def db_insert(source, total_faces, mask_on, no_mask, compliance, filename=""):
                 (source, ts, total_faces, mask_on, no_mask, compliance, filename)
             )
             conn.commit()
+
+def db_insert_violation(source, image_file, label, confidence):
+    ts = datetime.utcnow().isoformat() + "Z"
+    with _db_lock:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO violations "
+                "(timestamp, source, image_file, label, confidence, ai_status, ai_reasoning) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (ts, source, image_file, label, confidence, "Pending", "")
+            )
+            conn.commit()
+            return cursor.lastrowid
+
 
 # =============================================================================
 # GLOBAL STATE
@@ -529,8 +556,29 @@ def predict():
         STATS["total_checked"] += 1
         if clf["label"] == "Mask On": STATS["mask_count"] += 1
         else:                          STATS["no_mask_count"] += 1
-        results.append({"label": clf["label"], "confidence": float(clf["confidence"]),
-                         "box": [int(x), int(y), int(w), int(h)]})
+
+        violation_id = None
+        if clf["label"] == "No Mask":
+            try:
+                px, py = int(w*0.1), int(h*0.1)
+                x1 = max(0, int(x)-px)
+                y1 = max(0, int(y)-py)
+                x2 = min(frame.shape[1], int(x)+int(w)+px)
+                y2 = min(frame.shape[0], int(y)+int(h)+py)
+                roi = frame[y1:y2, x1:x2]
+                if roi.size > 0:
+                    violation_filename = f"violation_{uuid.uuid4().hex}.jpg"
+                    violation_path = OUTPUTS_DIR / violation_filename
+                    cv2.imwrite(str(violation_path), roi)
+                    violation_id = db_insert_violation("camera", violation_filename, clf["label"], float(clf["confidence"]))
+            except Exception as e:
+                log.warning(f"Failed to save camera violation: {e}")
+
+        res_item = {"label": clf["label"], "confidence": float(clf["confidence"]),
+                    "box": [int(x), int(y), int(w), int(h)]}
+        if violation_id:
+            res_item["violation_id"] = violation_id
+        results.append(res_item)
 
     ms = round((time.time()-t0)*1000, 1)
     log.info(f"predict  faces={len(results)}  "
@@ -566,8 +614,28 @@ def predict_image():
 
     results = []
     for (x,y,bw,bh), clf in zip(boxes, clfs):
-        results.append({"label": clf["label"], "confidence": float(clf["confidence"]),
-                         "box": [int(x), int(y), int(bw), int(bh)]})
+        violation_id = None
+        if clf["label"] == "No Mask":
+            try:
+                px, py = int(bw*0.1), int(bh*0.1)
+                x1 = max(0, int(x)-px)
+                y1 = max(0, int(y)-py)
+                x2 = min(frame.shape[1], int(x)+int(bw)+px)
+                y2 = min(frame.shape[0], int(y)+int(bh)+py)
+                roi = frame[y1:y2, x1:x2]
+                if roi.size > 0:
+                    violation_filename = f"violation_{uuid.uuid4().hex}.jpg"
+                    violation_path = OUTPUTS_DIR / violation_filename
+                    cv2.imwrite(str(violation_path), roi)
+                    violation_id = db_insert_violation("image", violation_filename, clf["label"], float(clf["confidence"]))
+            except Exception as e:
+                log.warning(f"Failed to save image violation: {e}")
+
+        res_item = {"label": clf["label"], "confidence": float(clf["confidence"]),
+                    "box": [int(x), int(y), int(bw), int(bh)]}
+        if violation_id:
+            res_item["violation_id"] = violation_id
+        results.append(res_item)
 
     total  = len(results)
     mask_c = sum(1 for r in results if r["label"] == "Mask On")
@@ -758,6 +826,22 @@ def predict_video():
 
         # ── build final report ────────────────────────────────────
         persons   = tracker.get_unique_persons()
+        
+        # Record video violations in the database
+        for p in persons:
+            if p["label"] == "No Mask":
+                try:
+                    b64_data = p.get("thumbnail", "")
+                    if b64_data:
+                        img_data = base64.b64decode(b64_data)
+                        violation_filename = f"violation_{uuid.uuid4().hex}.jpg"
+                        violation_path = OUTPUTS_DIR / violation_filename
+                        with open(violation_path, "wb") as vf:
+                            vf.write(img_data)
+                        db_insert_violation("video", violation_filename, p["label"], float(p["confidence"]))
+                except Exception as ve:
+                    log.warning(f"Failed to record video violation: {ve}")
+
         n_persons = len(persons)
         n_mask    = sum(1 for p in persons if p["label"] == "Mask On")
         n_nomask  = n_persons - n_mask
@@ -1010,6 +1094,331 @@ def send_alert_email():
         return jsonify({"error": f"SMTP error: {e}"}), 500
     except Exception as e:
         return jsonify({"error": f"Email failed: {e}"}), 500
+
+# =============================================================================
+# GROQ AI SERVICE INTEGRATION
+# =============================================================================
+def call_groq_api(api_key, model_name, messages, response_json=False):
+    """
+    Sends a request to the Groq API using urllib.request.
+    Zero external dependencies.
+    """
+    import urllib.request
+    import urllib.error
+    
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    
+    payload = {
+        "model": model_name,
+        "messages": messages,
+        "temperature": 0.2
+    }
+    if response_json:
+        payload["response_format"] = {"type": "json_object"}
+        
+    req_data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=req_data,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        },
+        method="POST"
+    )
+    
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            res_body = response.read().decode("utf-8")
+            res_json = json.loads(res_body)
+            text = res_json["choices"][0]["message"]["content"]
+            return text, None
+    except urllib.error.HTTPError as e:
+        try:
+            err_msg = e.read().decode("utf-8")
+        except Exception:
+            err_msg = str(e)
+        log.error(f"Groq API HTTP Error: {e.code} - {err_msg}")
+        return None, f"HTTP Error {e.code}: {err_msg}"
+    except Exception as e:
+        log.error(f"Groq API Connection Error: {e}")
+        return None, str(e)
+
+@app.route("/violations", methods=["GET"])
+def list_violations():
+    page     = max(1, int(request.args.get("page",     1)))
+    per_page = max(1, min(200, int(request.args.get("per_page", 20))))
+    offset   = (page-1) * per_page
+
+    with get_db() as conn:
+        rows  = conn.execute(
+            "SELECT * FROM violations ORDER BY id DESC LIMIT ? OFFSET ?",
+            (per_page, offset)).fetchall()
+        total, = conn.execute(
+            "SELECT COUNT(*) FROM violations").fetchone()
+
+    return jsonify({
+        "records": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": max(1, (total+per_page-1)//per_page)
+    }), 200
+
+@app.route("/predict/ai_summary", methods=["POST"])
+def ai_summary():
+    groq_key = request.headers.get("x-groq-key", "").strip()
+    
+    # 1. Fetch compliance statistics from DB
+    try:
+        with get_db() as conn:
+            total_records = conn.execute("SELECT COUNT(*) FROM detections").fetchone()[0] or 0
+            avg_compliance = conn.execute("SELECT AVG(compliance) FROM detections").fetchone()[0] or 100.0
+            total_faces = conn.execute("SELECT SUM(total_faces) FROM detections").fetchone()[0] or 0
+            mask_on = conn.execute("SELECT SUM(mask_on) FROM detections").fetchone()[0] or 0
+            no_mask = conn.execute("SELECT SUM(no_mask) FROM detections").fetchone()[0] or 0
+            total_violations = conn.execute("SELECT COUNT(*) FROM violations").fetchone()[0] or 0
+            
+            recent_rows = conn.execute("SELECT timestamp, source, total_faces, mask_on, no_mask, compliance FROM detections ORDER BY id DESC LIMIT 5").fetchall()
+            recent_list = [dict(r) for r in recent_rows]
+            
+        stats_summary = {
+            "total_detection_sessions": total_records,
+            "overall_average_compliance_rate": f"{avg_compliance:.1f}%",
+            "total_faces_scanned": total_faces,
+            "total_masks_on": mask_on,
+            "total_no_masks_violations": no_mask,
+            "individual_violations_recorded_in_feed": total_violations,
+            "recent_sessions": recent_list
+        }
+    except Exception as db_err:
+        return jsonify({"error": f"Database read failed: {db_err}"}), 500
+
+    # 2. Call Groq API or use fallback
+    if not groq_key:
+        demo_text = (
+            "### AI Compliance Summary (Demo Mode)\n\n"
+            f"* **Overview:** A total of **{total_faces} faces** have been scanned across **{total_records} sessions**. "
+            f"The overall compliance rate currently stands at **{avg_compliance:.1f}%**.\n"
+            f"* **Key Findings:** There are **{no_mask} violations** logged in the database, with **{total_violations} individual violations** saved in the Recent Violations Feed.\n"
+            "* **Compliance Pattern:** Scans show high mask compliance during shift-start periods. A mild compliance drop usually correlates with lunch breaks (approx. 1:30 PM - 2:30 PM).\n"
+            "* **Action Recommendations:**\n"
+            "  1. Maintain regular audio reminders in building exits during peak hours.\n"
+            "  2. Add a visual compliance monitor at the main lobby terminal."
+        )
+        return jsonify({"summary": demo_text, "demo_mode": True}), 200
+
+    prompt = (
+        "You are an expert Safety Audit Manager. Based on the following mask compliance log summary data, "
+        "write a brief, professional executive compliance audit report. Highlight trends, peaks, anomalies, "
+        "and suggest concrete safety improvements. Keep it under 200 words and use clean Markdown formatting with bullet points.\n\n"
+        f"Data:\n{json.dumps(stats_summary, indent=2)}"
+    )
+    
+    messages = [
+        {"role": "system", "content": "You are an expert Safety Audit Manager."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    text, err = call_groq_api(groq_key, "llama-3.3-70b-versatile", messages)
+    if err:
+        # Fallback to alternative model if versatile not available
+        text, err = call_groq_api(groq_key, "llama-3.1-8b-instant", messages)
+        if err:
+            return jsonify({"error": f"Groq API Error: {err}"}), 500
+        
+    return jsonify({"summary": text, "demo_mode": False}), 200
+
+@app.route("/predict/ai_query", methods=["POST"])
+def ai_query():
+    groq_key = request.headers.get("x-groq-key", "").strip()
+    data = request.get_json(force=True) or {}
+    user_query = data.get("query", "").strip()
+    
+    if not user_query:
+        return jsonify({"error": "Query is required"}), 400
+
+    if not groq_key:
+        demo_answer = (
+            f"**[Demo Mode - No API Key]**\n\n"
+            f"You asked: *\"{user_query}\"*\n\n"
+            "To unlock live database queries, please enter your Groq API Key in the **Settings** tab. "
+            "Here is a simulated response based on your request:\n"
+            "* **Overall Compliance:** 94.2%\n"
+            "* **Active Sessions:** 4 recorded today\n"
+            "* **Violations Alert:** Safety reminders have been sent out."
+        )
+        return jsonify({"answer": demo_answer, "demo_mode": True}), 200
+
+    # 1. Translate user query to SQL using Groq
+    local_time = datetime.now().isoformat()
+    system_instruction = (
+        "You translate natural language questions into SQLite queries. "
+        "The database has two tables:\n"
+        "1. detections (id, source, timestamp, total_faces, mask_on, no_mask, compliance, filename)\n"
+        "2. violations (id, timestamp, source, image_file, label, confidence, ai_status, ai_reasoning)\n\n"
+        f"Today's date and time is: {local_time}.\n"
+        "Write ONLY the raw SQLite query inside a ```sql ... ``` block. Do not write any other explanation."
+    )
+    
+    messages = [
+        {"role": "system", "content": system_instruction},
+        {"role": "user", "content": f"Generate a SQLite query for: '{user_query}'"}
+    ]
+    
+    sql_text, err = call_groq_api(groq_key, "llama-3.3-70b-versatile", messages)
+    if err:
+        sql_text, err = call_groq_api(groq_key, "llama-3.1-8b-instant", messages)
+        if err:
+            return jsonify({"error": f"AI translation failed: {err}"}), 500
+        
+    query_str = sql_text.strip()
+    if "```sql" in query_str:
+        query_str = query_str.split("```sql")[1].split("```")[0].strip()
+    elif "```" in query_str:
+        query_str = query_str.split("```")[1].split("```")[0].strip()
+
+    if not query_str.lower().startswith("select"):
+        return jsonify({"error": "For safety, only SELECT queries are permitted."}), 400
+
+    # 2. Run the SQL query against SQLite
+    try:
+        with get_db() as conn:
+            db_res = conn.execute(query_str).fetchall()
+            rows_data = [dict(r) for r in db_res[:50]]
+    except Exception as db_err:
+        return jsonify({
+            "error": f"SQL Execution Error: {db_err}",
+            "generated_sql": query_str
+        }), 400
+
+    # 3. Feed the results back to Groq to draft the final response
+    answer_prompt = (
+        f"The user asked a compliance question: '{user_query}'\n"
+        f"We ran this generated SQL query: '{query_str}'\n"
+        f"And retrieved these database records:\n{json.dumps(rows_data, indent=2)}\n\n"
+        "Answer the user's question clearly, drawing details directly from the database results. "
+        "Keep it concise, friendly, and format any tables or lists using Markdown."
+    )
+    
+    answer_messages = [
+        {"role": "user", "content": answer_prompt}
+    ]
+    
+    final_answer, err2 = call_groq_api(groq_key, "llama-3.3-70b-versatile", answer_messages)
+    if err2:
+        final_answer, err2 = call_groq_api(groq_key, "llama-3.1-8b-instant", answer_messages)
+        if err2:
+            return jsonify({"error": f"AI summary failed: {err2}", "raw_sql_data": rows_data}), 500
+
+    return jsonify({
+        "answer": final_answer,
+        "query": query_str,
+        "demo_mode": False
+    }), 200
+
+@app.route("/predict/verify_violation/<int:violation_id>", methods=["POST"])
+def verify_violation(violation_id):
+    groq_key = request.headers.get("x-groq-key", "").strip()
+
+    with get_db() as conn:
+        violation = conn.execute("SELECT * FROM violations WHERE id=?", (violation_id,)).fetchone()
+    
+    if not violation:
+        return jsonify({"error": f"Violation ID {violation_id} not found."}), 404
+        
+    image_filename = violation["image_file"]
+    image_filepath = OUTPUTS_DIR / image_filename
+    
+    if not image_filepath.exists():
+        return jsonify({"error": "Violation snapshot file missing."}), 404
+
+    if not groq_key:
+        statuses = [
+            ("Confirmed Violation", "No mask is visible on the user's face."),
+            ("Confirmed Violation", "Face detected with no nose or mouth covering."),
+            ("Excused Exception: Eating/Drinking", "The user appears to be holding a beverage or food item near their mouth."),
+            ("Excused Exception: Adjusting Mask", "The user is holding the straps of their mask, adjusting its fit.")
+        ]
+        status, reason = random.choice(statuses)
+        
+        with _db_lock:
+            with get_db() as conn:
+                conn.execute(
+                    "UPDATE violations SET ai_status=?, ai_reasoning=? WHERE id=?",
+                    (status, f"[Demo Mode] {reason}", violation_id)
+                )
+                conn.commit()
+                
+        return jsonify({"id": violation_id, "ai_status": status, "ai_reasoning": f"[Demo Mode] {reason}", "demo_mode": True}), 200
+
+    try:
+        with open(image_filepath, "rb") as img_f:
+            b64_image = base64.b64encode(img_f.read()).decode("utf-8")
+    except Exception as img_err:
+        return jsonify({"error": f"Failed to read image crop: {img_err}"}), 500
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "Analyze the cropped face image of a person flagged for not wearing a mask. "
+                        "Determine if it is a Confirmed Violation, or if there is a visible context/excuse "
+                        "(e.g., eating/drinking, adjusting mask).\n\n"
+                        "Provide a JSON response matching this exact schema:\n"
+                        "{\n"
+                        "  \"ai_status\": \"Must be exactly one of: 'Confirmed Violation', 'Excused Exception: Eating/Drinking', 'Excused Exception: Adjusting Mask', or 'Other Exception'\",\n"
+                        "  \"reasoning\": \"A very concise explanation (max 1 sentence) referencing what is visible in the crop (e.g., coffee cup, mask pulled down, empty face)\"\n"
+                        "}"
+                    )
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{b64_image}"
+                    }
+                }
+            ]
+        }
+    ]
+    
+    res_text, err = call_groq_api(
+        groq_key, 
+        "llama-3.2-11b-vision-preview", 
+        messages, 
+        response_json=True
+    )
+    
+    if err:
+        return jsonify({"error": f"AI verification failed: {err}"}), 500
+
+    try:
+        res_json = json.loads(res_text.strip())
+        ai_status = res_json.get("ai_status", "Confirmed Violation")
+        ai_reasoning = res_json.get("reasoning", "No mask is visible.")
+    except Exception as parse_err:
+        log.warning(f"Failed to parse Groq JSON output: {parse_err}. Text: {res_text}")
+        ai_status = "Confirmed Violation"
+        ai_reasoning = "Mask not visible (JSON parse error)."
+
+    with _db_lock:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE violations SET ai_status=?, ai_reasoning=? WHERE id=?",
+                (ai_status, ai_reasoning, violation_id)
+            )
+            conn.commit()
+
+    return jsonify({
+        "id": violation_id,
+        "ai_status": ai_status,
+        "ai_reasoning": ai_reasoning,
+        "demo_mode": False
+    }), 200
 
 # =============================================================================
 # FRONTEND ROUTES - Serve index.html and static files

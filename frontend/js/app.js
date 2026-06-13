@@ -11,7 +11,8 @@ const appState = {
   sessionStats: { totalFaces: 0, maskOn: 0, noMask: 0 },
   selectedCamera: 0,
   videoFile: null,
-  imageFile: null
+  imageFile: null,
+  groqKey: localStorage.getItem('groq_api_key') || ''
 };
 
 // ── INITIALIZATION ────────────────────────────────────────────────────────
@@ -116,6 +117,16 @@ async function initializeApp() {
       console.warn('setupCameraSelection failed:', e);
     }
 
+    // Prefill Groq API Key input field
+    try {
+      const keyInput = document.getElementById('groq-key-input');
+      if (keyInput) {
+        keyInput.value = appState.groqKey;
+      }
+    } catch (e) {
+      console.warn('Failed to prefill Groq key input:', e);
+    }
+
     console.log('✅ MaskDetect ready');
   } catch (error) {
     console.error('❌ Initialization error:', error);
@@ -164,23 +175,40 @@ function switchTab(tabName) {
   // Fallback: manual tab switching
   console.log('Using fallback tab switching...');
   const tabs = ['dashboard', 'camera', 'image', 'video', 'history', 'analytics', 'settings'];
-  
+
+  const NAV_TITLES = {
+    dashboard: 'Dashboard', camera: 'Live Camera Detection',
+    image: 'Image Analysis', video: 'Video Analysis',
+    history: 'Detection History', analytics: 'Analytics & Insights',
+    settings: 'Settings'
+  };
+
   tabs.forEach(tab => {
     const content = document.getElementById(`tab-${tab}`);
     const btn = document.getElementById(`tab-${tab}-btn`);
-    
+
     if (tab === tabName) {
       if (content) {
         content.style.removeProperty('display');
-        content.style.display = (tab === 'dashboard') ? 'flex' : 'block';
+        // Support .tab-panel CSS class system
+        content.classList.add('active');
+        content.classList.add('tab-active');
       }
       if (btn) btn.classList.add('active');
     } else {
-      if (content) content.style.display = 'none';
+      if (content) {
+        content.style.display = 'none';
+        content.classList.remove('active');
+        content.classList.remove('tab-active');
+      }
       if (btn) btn.classList.remove('active');
     }
   });
-  
+
+  // Update topbar title
+  const titleEl = document.getElementById('topbar-title');
+  if (titleEl) titleEl.textContent = NAV_TITLES[tabName] || tabName;
+
   appState.currentTab = tabName;
   onTabShow(tabName);
 }
@@ -259,6 +287,9 @@ async function startCamera() {
 
   try {
     loader.show();
+    // Reset session stats for the new camera monitoring session
+    appState.sessionStats = { totalFaces: 0, maskOn: 0, noMask: 0 };
+
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         width: { ideal: 1280 },
@@ -313,6 +344,9 @@ function stopCamera() {
       appState.sessionStats.noMask
     ).catch(console.error);
   }
+
+  // Reset session stats
+  appState.sessionStats = { totalFaces: 0, maskOn: 0, noMask: 0 };
 }
 
 // ── DETECTION LOOP ────────────────────────────────────────────────────────
@@ -494,7 +528,7 @@ function updateStats(faces) {
   const maskCount = faces.filter(f => f.label === 'Mask On').length;
   const noMaskCount = faces.length - maskCount;
 
-  appState.sessionStats.totalFaces = Math.max(appState.sessionStats.totalFaces, faces.length);
+  appState.sessionStats.totalFaces += faces.length;
   appState.sessionStats.maskOn += maskCount;
   appState.sessionStats.noMask += noMaskCount;
 
@@ -1016,6 +1050,13 @@ async function updateDashboard() {
       const uptimeEl = DOM.query('#server-uptime');
       if (uptimeEl) DOM.text(uptimeEl, Format.duration(health.uptime_s * 1000));
     }
+
+    // Refresh the recent violations feed
+    try {
+      loadViolationsFeed();
+    } catch (ve) {
+      console.warn('Failed to load violations feed:', ve);
+    }
   } catch (error) {
     console.error('Dashboard update failed:', error);
   }
@@ -1024,52 +1065,428 @@ async function updateDashboard() {
 // ── ANALYTICS ──────────────────────────────────────────────────────────────
 async function loadAnalytics() {
   try {
-    const { data } = await MaskAPI.getDetections(1, 100);
-    const records = data.records || [];
+    const rangeEl = DOM.query('#analytics-range');
+    const rangeDays = rangeEl ? rangeEl.value : 'all';
+
+    const { data } = await MaskAPI.getDetections(1, 500);
+    let records = data.records || [];
+
+    // Filter by date range
+    if (rangeDays !== 'all') {
+      const days = parseInt(rangeDays);
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+      records = records.filter(r => new Date(r.timestamp) >= cutoff);
+    }
+
+    // Update subtitle
+    const subtitleEl = DOM.query('#analytics-subtitle');
+    if (subtitleEl) {
+      subtitleEl.textContent = records.length > 0
+        ? `Showing ${records.length} sessions${rangeDays !== 'all' ? ` from last ${rangeDays} days` : ' (all time)'}`
+        : 'No detection data yet — run a detection to populate analytics';
+    }
 
     if (records.length === 0) {
-      if (typeof notifier !== 'undefined') {
-        notifier.info('No data available for analytics', 3000);
-      }
+      // Show empty states
+      const emptyEls = ['compliance-chart-empty', 'volume-chart-empty'];
+      emptyEls.forEach(id => { const el = DOM.query('#' + id); if (el) el.style.display = 'block'; });
+      const chartEls = ['compliance-chart', 'volume-chart'];
+      chartEls.forEach(id => { const el = DOM.query('#' + id); if (el) el.style.display = 'none'; });
       return;
     }
 
-    // Calculate daily stats
-    const dailyStats = StatisticsCalculator.calculateDailyStats(records);
+    // Show charts
+    ['compliance-chart', 'volume-chart'].forEach(id => {
+      const el = DOM.query('#' + id);
+      if (el) el.style.display = 'block';
+    });
+    ['compliance-chart-empty', 'volume-chart-empty'].forEach(id => {
+      const el = DOM.query('#' + id);
+      if (el) el.style.display = 'none';
+    });
 
-    // Draw compliance chart
+    // ── Aggregate totals ──────────────────────────────────────
+    const totalSessions = records.length;
+    const totalFaces   = records.reduce((s, r) => s + (r.total_faces || 0), 0);
+    const totalMaskOn  = records.reduce((s, r) => s + (r.mask_on || 0), 0);
+    const totalNoMask  = records.reduce((s, r) => s + (r.no_mask || 0), 0);
+    const avgCompliance = totalFaces > 0
+      ? ((totalMaskOn / totalFaces) * 100)
+      : (records.reduce((s, r) => s + (r.compliance || 0), 0) / records.length);
+
+    // ── Compliance Grade ─────────────────────────────────────
+    const score = Math.round(avgCompliance);
+    let gradeLabel, gradeClass, gradeTitle, gradeSub, recs;
+    if (score >= 95)      { gradeLabel = 'A+'; gradeClass = 'A-plus'; gradeTitle = 'Excellent Compliance'; gradeSub = 'Top-tier safety standard maintained'; recs = ['Keep monitoring regularly to maintain standard']; }
+    else if (score >= 90) { gradeLabel = 'A';  gradeClass = 'A';      gradeTitle = 'Very Good Compliance'; gradeSub = 'Strong performance, minor room to improve'; recs = ['Increase monitoring during peak hours']; }
+    else if (score >= 80) { gradeLabel = 'B';  gradeClass = 'B';      gradeTitle = 'Good Compliance';      gradeSub = 'Meeting acceptable safety thresholds'; recs = ['Schedule awareness campaigns', 'Monitor high-traffic zones']; }
+    else if (score >= 70) { gradeLabel = 'C';  gradeClass = 'C';      gradeTitle = 'Fair Compliance';      gradeSub = 'Below target — corrective action needed'; recs = ['Increase enforcement frequency', 'Conduct compliance training']; }
+    else if (score >= 55) { gradeLabel = 'D';  gradeClass = 'D';      gradeTitle = 'Poor Compliance';      gradeSub = 'Significant violations detected'; recs = ['Immediate policy review required', 'Install more monitoring zones', 'Review footage for repeat offenders']; }
+    else                  { gradeLabel = 'F';  gradeClass = 'F';      gradeTitle = 'Critical Non-compliance'; gradeSub = 'Urgent intervention required'; recs = ['Escalate to management', 'Deploy additional monitors', 'Implement strict access controls']; }
+
+    // ── Populate KPI Strip ────────────────────────────────────
+    const setText = (id, val) => { const el = DOM.query('#' + id); if (el) el.textContent = val; };
+    setText('an-total-sessions', totalSessions.toLocaleString());
+    setText('an-total-faces',    totalFaces.toLocaleString());
+    setText('an-mask-on',        totalMaskOn.toLocaleString());
+    setText('an-no-mask',        totalNoMask.toLocaleString());
+    setText('an-avg-compliance', score + '%');
+    setText('an-grade',          gradeLabel);
+
+    // ── Donut chart data ──────────────────────────────────────
+    setText('donut-pct',           score + '%');
+    setText('legend-mask-on-val',  totalMaskOn.toLocaleString());
+    setText('legend-no-mask-val',  totalNoMask.toLocaleString());
+    setText('legend-total-val',    totalFaces.toLocaleString());
+
+    // ── Grade badge ───────────────────────────────────────────
+    const gradeBadge = DOM.query('#grade-badge');
+    if (gradeBadge) {
+      gradeBadge.textContent = gradeLabel;
+      gradeBadge.className = 'grade-badge ' + gradeClass;
+    }
+    setText('grade-title', gradeTitle);
+    setText('grade-sub',   gradeSub);
+    const gradeBar = DOM.query('#grade-bar');
+    if (gradeBar) gradeBar.style.width = score + '%';
+
+    const recsContainer = DOM.query('#grade-recommendations');
+    if (recsContainer) {
+      recsContainer.innerHTML = recs.map(r =>
+        `<div class="grade-rec">${r}</div>`
+      ).join('');
+    }
+
+    // ── Source breakdown table ────────────────────────────────
+    const bySource = {};
+    records.forEach(r => {
+      const src = (r.source || 'unknown').toLowerCase();
+      if (!bySource[src]) bySource[src] = { sessions: 0, faces: 0, maskOn: 0, noMask: 0 };
+      bySource[src].sessions++;
+      bySource[src].faces  += (r.total_faces || 0);
+      bySource[src].maskOn += (r.mask_on || 0);
+      bySource[src].noMask += (r.no_mask || 0);
+    });
+
+    const tbody = DOM.query('#source-breakdown-body');
+    if (tbody) {
+      const srcIcons = { camera: '📷', image: '🖼', video: '🎬', unknown: '❓' };
+      const rows = Object.entries(bySource).map(([src, s]) => {
+        const compliance = s.faces > 0 ? Math.round((s.maskOn / s.faces) * 100) : 0;
+        const compColor = compliance >= 90 ? '#10b981' : compliance >= 70 ? '#f59e0b' : '#ef4444';
+        return `<tr>
+          <td><span class="badge ${src}" style="text-transform:capitalize;">${srcIcons[src] || '🔍'} ${src}</span></td>
+          <td>${s.sessions}</td>
+          <td>${s.faces.toLocaleString()}</td>
+          <td style="color:#10b981;font-weight:600;">${s.maskOn.toLocaleString()}</td>
+          <td style="color:#ef4444;font-weight:600;">${s.noMask.toLocaleString()}</td>
+          <td><span style="font-weight:700;color:${compColor};">${compliance}%</span></td>
+          <td>
+            <div class="src-bar-wrap">
+              <div class="src-bar" style="width:${compliance}%;background:${compColor};"></div>
+            </div>
+          </td>
+        </tr>`;
+      });
+      tbody.innerHTML = rows.length > 0 ? rows.join('') :
+        '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px;">No data</td></tr>';
+    }
+
+    // ── Draw donut chart ──────────────────────────────────────
+    const donutCanvas = DOM.query('#distribution-chart');
+    if (donutCanvas) {
+      const ctx = donutCanvas.getContext('2d');
+      AnalyticsCharts.drawDonut(ctx, [
+        { label: 'Mask On', value: totalMaskOn,  color: '#10b981' },
+        { label: 'No Mask', value: totalNoMask,  color: '#ef4444' }
+      ], 150, 150);
+    }
+
+    // ── Sort records chronologically for charts ───────────────
+    const sorted = [...records].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    // ── Draw compliance area chart ────────────────────────────
     const complianceCanvas = DOM.query('#compliance-chart');
     if (complianceCanvas) {
-      const chartData = dailyStats.map(d => ({
-        label: d.date,
-        value: Math.round(d.avgCompliance)
+      const W = complianceCanvas.offsetWidth || 600;
+      complianceCanvas.width  = W;
+      complianceCanvas.height = 220;
+      const ctx = complianceCanvas.getContext('2d');
+      const compData = sorted.map(r => ({
+        label: Format.time ? Format.time(r.timestamp) : new Date(r.timestamp).toLocaleDateString(),
+        compliance: Math.round(r.compliance || 0),
+        noMask: r.no_mask || 0
       }));
-      ChartRenderer.drawLineChart(
-        complianceCanvas.getContext('2d'),
-        chartData,
-        { width: complianceCanvas.width, height: complianceCanvas.height }
-      );
+      AnalyticsCharts.drawAreaChart(ctx, compData, W, 220);
     }
 
-    // Draw distribution chart
-    const distributionCanvas = DOM.query('#distribution-chart');
-    if (distributionCanvas) {
-      const total = records.length;
-      const maskCount = records.filter(r => r.compliance >= 90).length;
-      const chartData = [
-        { label: 'Compliant', value: maskCount },
-        { label: 'Non-compliant', value: total - maskCount }
-      ];
-      ChartRenderer.drawPieChart(
-        distributionCanvas.getContext('2d'),
-        chartData,
-        { width: distributionCanvas.width, height: distributionCanvas.height }
-      );
+    // ── Draw volume bar chart ─────────────────────────────────
+    const volumeCanvas = DOM.query('#volume-chart');
+    if (volumeCanvas) {
+      const W2 = volumeCanvas.offsetWidth || 600;
+      volumeCanvas.width  = W2;
+      volumeCanvas.height = 150;
+      const ctx = volumeCanvas.getContext('2d');
+      const volData = sorted.map(r => ({
+        label: Format.time ? Format.time(r.timestamp) : new Date(r.timestamp).toLocaleDateString(),
+        value: r.total_faces || 0
+      }));
+      AnalyticsCharts.drawBarChart(ctx, volData, W2, 150);
     }
+
   } catch (error) {
     console.error('Analytics load failed:', error);
+    if (typeof notifier !== 'undefined') {
+      notifier.error('Failed to load analytics data', 3000);
+    }
   }
 }
+
+// ── Export analytics as CSV ─────────────────────────────────────────────────
+window.exportAnalyticsCSV = async function() {
+  try {
+    const { data } = await MaskAPI.getDetections(1, 500);
+    const records = data.records || [];
+    if (records.length === 0) {
+      if (typeof notifier !== 'undefined') notifier.info('No data to export', 2000);
+      return;
+    }
+    const headers = ['ID', 'Timestamp', 'Source', 'Total Faces', 'Mask On', 'No Mask', 'Compliance %'];
+    const rows = records.map(r => [
+      r.id, r.timestamp, r.source, r.total_faces || 0,
+      r.mask_on || 0, r.no_mask || 0,
+      (r.compliance || 0).toFixed(1)
+    ]);
+    const csv = [headers, ...rows].map(row => row.map(c => `"${c}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `maskdetect-analytics-${Date.now()}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    if (typeof notifier !== 'undefined') notifier.success('CSV exported successfully', 2000);
+  } catch (e) {
+    if (typeof notifier !== 'undefined') notifier.error('Export failed', 2000);
+  }
+};
+
+// ── ANALYTICS CHART ENGINE ──────────────────────────────────────────────────
+const AnalyticsCharts = {
+
+  // Detect if dark mode is active
+  isDark() {
+    return document.body.classList.contains('dark-mode');
+  },
+
+  colors() {
+    return this.isDark()
+      ? { text: '#94a3b8', grid: 'rgba(255,255,255,0.06)', bg: '#0f1f36', label: '#64748b' }
+      : { text: '#64748b', grid: '#f1f5f9', bg: '#ffffff', label: '#94a3b8' };
+  },
+
+  // Smooth area + line chart for compliance over time
+  drawAreaChart(ctx, data, W, H) {
+    if (!data || data.length === 0) return;
+    const dark = this.isDark();
+    const c = this.colors();
+
+    ctx.clearRect(0, 0, W, H);
+
+    const PAD_L = 44, PAD_R = 16, PAD_T = 12, PAD_B = 36;
+    const cW = W - PAD_L - PAD_R;
+    const cH = H - PAD_T - PAD_B;
+
+    // Y scale: 0–100 (compliance percentage)
+    const yMax = 100;
+
+    // Draw grid lines + Y labels
+    ctx.font = '10px Inter, sans-serif';
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= 5; i++) {
+      const yVal = (yMax / 5) * i;
+      const y = PAD_T + cH - (yVal / yMax) * cH;
+      ctx.strokeStyle = c.grid;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(W - PAD_R, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = c.label;
+      ctx.fillText(yVal + '%', PAD_L - 6, y + 4);
+    }
+
+    // X labels (show up to 8 to avoid crowding)
+    const maxLabels = Math.min(data.length, 8);
+    const labelStep = Math.ceil(data.length / maxLabels);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = c.label;
+    data.forEach((d, i) => {
+      if (i % labelStep !== 0 && i !== data.length - 1) return;
+      const x = PAD_L + (i / Math.max(data.length - 1, 1)) * cW;
+      const lbl = d.label.length > 8 ? d.label.slice(-5) : d.label;
+      ctx.fillText(lbl, x, H - PAD_B + 14);
+    });
+
+    // Draw filled area (compliance)
+    const grad = ctx.createLinearGradient(0, PAD_T, 0, PAD_T + cH);
+    grad.addColorStop(0, dark ? 'rgba(16,185,129,0.28)' : 'rgba(16,185,129,0.15)');
+    grad.addColorStop(1, dark ? 'rgba(16,185,129,0.02)' : 'rgba(16,185,129,0.01)');
+
+    ctx.beginPath();
+    data.forEach((d, i) => {
+      const x = PAD_L + (i / Math.max(data.length - 1, 1)) * cW;
+      const y = PAD_T + cH - (Math.min(d.compliance, 100) / yMax) * cH;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    // Close area at bottom
+    const lastX = PAD_L + cW;
+    ctx.lineTo(lastX, PAD_T + cH);
+    ctx.lineTo(PAD_L, PAD_T + cH);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Draw compliance line
+    ctx.beginPath();
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.setLineDash([]);
+    data.forEach((d, i) => {
+      const x = PAD_L + (i / Math.max(data.length - 1, 1)) * cW;
+      const y = PAD_T + cH - (Math.min(d.compliance, 100) / yMax) * cH;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Draw data points on compliance line
+    data.forEach((d, i) => {
+      const x = PAD_L + (i / Math.max(data.length - 1, 1)) * cW;
+      const y = PAD_T + cH - (Math.min(d.compliance, 100) / yMax) * cH;
+      ctx.beginPath();
+      ctx.arc(x, y, data.length > 30 ? 2 : 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#10b981';
+      ctx.fill();
+      ctx.strokeStyle = dark ? '#0f1f36' : '#fff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    });
+
+    // Draw violations as red dots on secondary axis
+    if (data.some(d => d.noMask > 0)) {
+      const maxNoMask = Math.max(...data.map(d => d.noMask), 1);
+      data.forEach((d, i) => {
+        if (d.noMask <= 0) return;
+        const x = PAD_L + (i / Math.max(data.length - 1, 1)) * cW;
+        // Map noMask to top 30% of chart
+        const normY = PAD_T + cH * 0.10 + (d.noMask / maxNoMask) * cH * 0.30;
+        const y = PAD_T + cH - normY + PAD_T;
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(239,68,68,0.75)';
+        ctx.fill();
+      });
+    }
+  },
+
+  // Grouped bar chart for face volume
+  drawBarChart(ctx, data, W, H) {
+    if (!data || data.length === 0) return;
+    const dark = this.isDark();
+    const c = this.colors();
+
+    ctx.clearRect(0, 0, W, H);
+    const PAD_L = 40, PAD_R = 12, PAD_T = 10, PAD_B = 30;
+    const cW = W - PAD_L - PAD_R;
+    const cH = H - PAD_T - PAD_B;
+    const maxVal = Math.max(...data.map(d => d.value), 1);
+
+    // Grid + Y axis
+    ctx.font = '10px Inter, sans-serif';
+    for (let i = 0; i <= 4; i++) {
+      const yVal = Math.round((maxVal / 4) * i);
+      const y = PAD_T + cH - (yVal / maxVal) * cH;
+      ctx.strokeStyle = c.grid;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(W - PAD_R, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = c.label;
+      ctx.textAlign = 'right';
+      ctx.fillText(yVal, PAD_L - 5, y + 4);
+    }
+
+    // Bars
+    const barW = Math.max(4, (cW / data.length) * 0.65);
+    const gapW = (cW / data.length) * 0.35;
+    const maxLabels = Math.min(data.length, 10);
+    const labelStep = Math.ceil(data.length / maxLabels);
+
+    data.forEach((d, i) => {
+      const x = PAD_L + (i / data.length) * cW + gapW / 2;
+      const barH = (d.value / maxVal) * cH;
+      const y = PAD_T + cH - barH;
+
+      // Bar gradient
+      const grad = ctx.createLinearGradient(x, y, x, y + barH);
+      grad.addColorStop(0, '#3b82f6');
+      grad.addColorStop(1, 'rgba(59,130,246,0.4)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(x, y, barW, barH, [3, 3, 0, 0]) : ctx.rect(x, y, barW, barH);
+      ctx.fill();
+
+      // X labels
+      if (i % labelStep === 0 || i === data.length - 1) {
+        const lbl = d.label.length > 6 ? d.label.slice(-5) : d.label;
+        ctx.fillStyle = c.label;
+        ctx.textAlign = 'center';
+        ctx.fillText(lbl, x + barW / 2, H - PAD_B + 14);
+      }
+    });
+  },
+
+  // Donut chart with center hole
+  drawDonut(ctx, data, W, H) {
+    ctx.clearRect(0, 0, W, H);
+    const total = data.reduce((s, d) => s + d.value, 0);
+    if (total === 0) {
+      ctx.font = 'bold 11px Inter, sans-serif';
+      ctx.fillStyle = '#94a3b8';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('No data', W / 2, H / 2);
+      return;
+    }
+
+    const cx = W / 2, cy = H / 2;
+    const outerR = Math.min(W, H) / 2 - 6;
+    const innerR = outerR * 0.58;  // donut hole size
+    let startAngle = -Math.PI / 2;
+
+    // Draw segments with slight gap
+    data.forEach(d => {
+      const sweep = (d.value / total) * Math.PI * 2;
+      const endAngle = startAngle + sweep;
+      const gap = 0.03;
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, outerR, startAngle + gap, endAngle - gap);
+      ctx.arc(cx, cy, innerR, endAngle - gap, startAngle + gap, true);
+      ctx.closePath();
+      ctx.fillStyle = d.color;
+      ctx.fill();
+
+      startAngle = endAngle;
+    });
+
+    // Clear center for donut effect
+    ctx.beginPath();
+    ctx.arc(cx, cy, innerR - 1, 0, Math.PI * 2);
+    ctx.fillStyle = this.isDark() ? 'var(--bg-primary, #0f1f36)' : '#ffffff';
+    // Don't actually fill — just rely on the hole drawn above
+  }
+};
+
 
 // ── CONNECTION MONITORING ──────────────────────────────────────────────────
 function updateConnectionUI(isOnline) {
@@ -1240,3 +1657,295 @@ if (typeof downloadFile === 'undefined') {
 }
 
 // No confirm override needed to avoid recursion and stack overflow
+
+// ── GROQ AI DASHBOARD UTILITIES ─────────────────────────────────────────────
+window.saveGroqKey = function() {
+  const input = document.getElementById('groq-key-input');
+  if (input) {
+    const key = input.value.trim();
+    localStorage.setItem('groq_api_key', key);
+    appState.groqKey = key;
+    if (typeof notifier !== 'undefined') {
+      notifier.success('Groq API Key saved successfully! ✅', 3000);
+    }
+  }
+};
+
+window.toggleCopilot = function() {
+  const chatWindow = document.getElementById('copilot-chat-window');
+  if (chatWindow) {
+    const isHidden = chatWindow.style.display === 'none';
+    chatWindow.style.display = isHidden ? 'flex' : 'none';
+    if (isHidden) {
+      const chatLog = document.getElementById('copilot-chat-log');
+      if (chatLog) chatLog.scrollTop = chatLog.scrollHeight;
+    }
+  }
+};
+
+window.sendCopilotMessage = async function() {
+  const input = document.getElementById('copilot-input');
+  const chatLog = document.getElementById('copilot-chat-log');
+  if (!input || !chatLog) return;
+  
+  const text = input.value.trim();
+  if (!text) return;
+  
+  input.value = '';
+  
+  // Render User Message
+  const userMsg = DOM.create('div', {
+    style: {
+      alignSelf: 'flex-end',
+      background: 'var(--primary)',
+      color: 'white',
+      padding: '10px 14px',
+      borderRadius: '12px 12px 0 12px',
+      maxWidth: '85%',
+      lineHeight: '1.4'
+    }
+  }, [document.createTextNode(text)]);
+  chatLog.appendChild(userMsg);
+  chatLog.scrollTop = chatLog.scrollHeight;
+  
+  // Render Loading Indicator
+  const loaderMsg = DOM.create('div', {
+    style: {
+      alignSelf: 'flex-start',
+      background: 'var(--bg-secondary)',
+      border: '1px solid var(--border)',
+      padding: '10px 14px',
+      borderRadius: '12px 12px 12px 0',
+      maxWidth: '85%',
+      color: 'var(--text-secondary)'
+    }
+  }, [
+    DOM.create('span', { class: 'spinner small', style: { display: 'inline-block', marginRight: '8px', verticalAlign: 'middle' } }),
+    document.createTextNode('Copilot is querying database...')
+  ]);
+  chatLog.appendChild(loaderMsg);
+  chatLog.scrollTop = chatLog.scrollHeight;
+  
+  try {
+    const { data } = await MaskAPI.aiQuery(text, appState.groqKey);
+    chatLog.removeChild(loaderMsg);
+    
+    const botMsg = DOM.create('div', {
+      style: {
+        alignSelf: 'flex-start',
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        padding: '12px 14px',
+        borderRadius: '12px 12px 12px 0',
+        maxWidth: '85%',
+        color: 'var(--text-primary)',
+        lineHeight: '1.4'
+      }
+    });
+    botMsg.innerHTML = formatMarkdownText(data.answer);
+    chatLog.appendChild(botMsg);
+  } catch (error) {
+    chatLog.removeChild(loaderMsg);
+    const errorMsg = DOM.create('div', {
+      style: {
+        alignSelf: 'flex-start',
+        background: 'rgba(239, 68, 68, 0.1)',
+        border: '1px solid rgba(239, 68, 68, 0.25)',
+        color: 'var(--danger)',
+        padding: '10px 14px',
+        borderRadius: '12px 12px 12px 0',
+        maxWidth: '85%',
+        lineHeight: '1.4'
+      }
+    }, [document.createTextNode(`Error: ${error.message}`)]);
+    chatLog.appendChild(errorMsg);
+  }
+  
+  chatLog.scrollTop = chatLog.scrollHeight;
+};
+
+window.generateAISummary = async function() {
+  const container = document.getElementById('ai-summary-container');
+  const btn = document.getElementById('generate-ai-summary-btn');
+  if (!container || !btn) return;
+  
+  btn.disabled = true;
+  DOM.empty(container);
+  
+  container.appendChild(DOM.create('div', {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '40px 0',
+      gap: '12px',
+      color: 'var(--text-secondary)'
+    }
+  }, [
+    DOM.create('div', { class: 'spinner' }),
+    DOM.create('div', { style: { fontSize: '13px', fontWeight: '500' } }, ['Gemini is compiling audit report...'])
+  ]));
+  
+  try {
+    const { data } = await MaskAPI.aiSummary(appState.groqKey);
+    DOM.empty(container);
+    
+    const reportWrap = DOM.create('div', {
+      style: {
+        padding: '8px 4px',
+        color: 'var(--text-primary)'
+      }
+    });
+    reportWrap.innerHTML = formatMarkdownText(data.summary);
+    
+    if (data.demo_mode) {
+      const notice = DOM.create('div', {
+        style: {
+          fontSize: '11px',
+          color: 'var(--warning)',
+          background: 'rgba(245, 158, 11, 0.1)',
+          border: '1px solid rgba(245, 158, 11, 0.25)',
+          padding: '8px 12px',
+          borderRadius: '6px',
+          marginTop: '16px'
+        }
+      }, [document.createTextNode('⚠️ Running in AI Demo Mode. Add a Groq API Key in Settings to link live SQLite statistics.')]);
+      reportWrap.appendChild(notice);
+    }
+    
+    container.appendChild(reportWrap);
+  } catch (error) {
+    DOM.empty(container);
+    container.appendChild(DOM.create('div', {
+      style: {
+        color: 'var(--danger)',
+        padding: '20px',
+        textAlign: 'center',
+        fontSize: '13px'
+      }
+    }, [document.createTextNode(`Failed to generate summary: ${error.message}`)]));
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+window.loadViolationsFeed = async function() {
+  const container = document.getElementById('violations-container');
+  const countBadge = document.getElementById('violations-count');
+  if (!container) return;
+  
+  try {
+    const { data } = await MaskAPI.getViolations(1, 20);
+    const records = data.records || [];
+    
+    if (countBadge) countBadge.textContent = data.total || 0;
+    
+    DOM.empty(container);
+    
+    if (records.length === 0) {
+      container.innerHTML = '<div style="color: var(--text-tertiary); font-size: 12px; text-align: center; padding: 20px 0;">No active violations recorded</div>';
+      return;
+    }
+    
+    records.forEach(violation => {
+      let aiBadgeClass = 'neutral';
+      if (violation.ai_status === 'Confirmed Violation') aiBadgeClass = 'danger';
+      else if (violation.ai_status?.startsWith('Excused')) aiBadgeClass = 'success';
+      else if (violation.ai_status === 'Pending') aiBadgeClass = 'warning';
+      
+      const row = DOM.create('div', {
+        class: 'face-row',
+        style: {
+          display: 'flex',
+          gap: '12px',
+          padding: '12px 0',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+          alignItems: 'center'
+        }
+      }, [
+        DOM.create('div', {
+          style: {
+            width: '45px',
+            height: '45px',
+            borderRadius: '6px',
+            overflow: 'hidden',
+            background: 'rgba(255,255,255,0.05)',
+            border: '1px solid var(--border)',
+            flexShrink: 0
+          }
+        }, [
+          DOM.create('img', {
+            src: `${API_BASE}/video/download/${violation.image_file}`,
+            style: { width: '100%', height: '100%', objectFit: 'cover' }
+          })
+        ]),
+        
+        DOM.create('div', { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '3px' } }, [
+          DOM.create('div', { style: { fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, [
+            `Violation #${violation.id}`,
+            DOM.create('span', { style: { fontSize: '10px', color: 'var(--text-tertiary)' } }, [Format.time(violation.timestamp)])
+          ]),
+          DOM.create('div', { style: { fontSize: '11px', color: 'var(--text-secondary)' } }, [
+            `Source: ${violation.source.toUpperCase()} | Conf: ${Math.round(violation.confidence * 100)}%`
+          ]),
+          DOM.create('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' } }, [
+            DOM.create('span', { class: `badge ${aiBadgeClass}`, style: { fontSize: '10px', padding: '2px 6px' } }, [violation.ai_status]),
+            violation.ai_reasoning ? 
+              DOM.create('span', { style: { fontSize: '11px', color: 'var(--text-tertiary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '180px' }, title: violation.ai_reasoning }, [violation.ai_reasoning]) : 
+              DOM.create('button', {
+                class: 'btn btn-ghost',
+                style: { padding: '2px 6px', fontSize: '10px', minHeight: 'auto', border: '1px solid var(--border)', background: 'rgba(255,255,255,0.03)' },
+                onclick: `triggerAIAnalysis(${violation.id})`
+              }, ['Verify Context'])
+          ])
+        ])
+      ]);
+      
+      container.appendChild(row);
+    });
+  } catch (error) {
+    console.error('Failed to load violations feed:', error);
+  }
+};
+
+window.triggerAIAnalysis = async function(violationId) {
+  if (typeof notifier !== 'undefined') {
+    notifier.info(`AI analysis triggered for violation #${violationId}...`, 2000);
+  }
+  try {
+    await MaskAPI.verifyViolation(violationId, appState.groqKey);
+    loadViolationsFeed();
+    if (typeof notifier !== 'undefined') {
+      notifier.success(`Violation #${violationId} verified successfully! ✅`, 3000);
+    }
+  } catch (error) {
+    if (typeof notifier !== 'undefined') {
+      notifier.error(`AI verification failed: ${error.message}`, 4000);
+    }
+  }
+};
+
+function formatMarkdownText(text) {
+  if (!text) return '';
+  let html = text;
+  
+  html = html
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+    
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/`(.*?)`/g, '<code style="background: rgba(255,255,255,0.08); padding: 2px 4px; border-radius: 4px; font-family: monospace;">$1</code>');
+  
+  html = html.split('\n').map(line => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('* ') || trimmed.startsWith('- ')) {
+      return `<li style="margin-left: 16px; margin-top: 4px;">${trimmed.substring(2)}</li>`;
+    }
+    return line;
+  }).join('\n');
+  
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}

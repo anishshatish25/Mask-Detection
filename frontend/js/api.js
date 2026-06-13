@@ -254,6 +254,40 @@ const MaskAPI = {
       smtp_user: smtpUser, smtp_pass: smtpPass,
       subject, body
     });
+  },
+
+  /**
+   * Get recorded violations (paginated)
+   */
+  getViolations(page = 1, perPage = 20) {
+    return api.get(`/violations?page=${page}&per_page=${perPage}`);
+  },
+
+  /**
+   * Get AI compliance summary from Groq
+   */
+  aiSummary(key) {
+    return api.post('/predict/ai_summary', {}, {
+      headers: { 'x-groq-key': key }
+    });
+  },
+
+  /**
+   * Ask AI Copilot a natural language question (SQL Agent)
+   */
+  aiQuery(query, key) {
+    return api.post('/predict/ai_query', { query }, {
+      headers: { 'x-groq-key': key }
+    });
+  },
+
+  /**
+   * Trigger AI verification on a specific violation
+   */
+  verifyViolation(violationId, key) {
+    return api.post(`/predict/verify_violation/${violationId}`, {}, {
+      headers: { 'x-groq-key': key }
+    });
   }
 };
 

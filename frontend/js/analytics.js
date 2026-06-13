@@ -127,6 +127,8 @@ class ChartRenderer {
       gridColor = 'rgb(230, 230, 230)'
     } = options;
 
+    ctx.clearRect(0, 0, width, height);
+
     const padding = 40;
     const chartWidth = width - padding * 2;
     const chartHeight = height - padding * 2;
@@ -174,6 +176,8 @@ class ChartRenderer {
       textColor = 'rgb(31, 41, 55)',
       gridColor = 'rgb(230, 230, 230)'
     } = options;
+
+    ctx.clearRect(0, 0, width, height);
 
     const padding = 40;
     const chartWidth = width - padding * 2;
@@ -233,6 +237,8 @@ class ChartRenderer {
    */
   static drawPieChart(ctx, data, options = {}) {
     const { width = 300, height = 300, colors = [] } = options;
+
+    ctx.clearRect(0, 0, width, height);
 
     const centerX = width / 2;
     const centerY = height / 2;
